@@ -62,6 +62,12 @@ jobs:
           printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-key.json"
           echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-key.json" >> "$GITHUB_ENV"
 
+      # Debug: prints ONLY the email + project of the key CI is using (never the
+      # private key), so we can confirm which service account is authenticating.
+      # Remove this step once the deploy is green.
+      - name: Show deploy identity (debug)
+        run: node -e "const k=require(process.env.GOOGLE_APPLICATION_CREDENTIALS); console.log('CI is deploying as:', k.client_email, '| project:', k.project_id)"
+
       # Deploying `functions` requires the Blaze plan, so CI currently ships
       # Hosting + Firestore rules/indexes only. Once Blaze is enabled on the
       # project, change --only to hosting,firestore,functions to bring the
