@@ -14,7 +14,7 @@ import {
   Trash2,
   Users
 } from "lucide-react";
-import { Dispatch, FormEvent, SetStateAction, useMemo, useState } from "react";
+import { Dispatch, FormEvent, SetStateAction, useEffect, useMemo, useState } from "react";
 import { QRCodePanel } from "../components/QRCodePanel";
 import {
   availabilityWindows,
@@ -26,9 +26,16 @@ import {
   sampleOrders,
   vendorSessions
 } from "../data/fixtures";
+import { downloadCsv } from "../lib/csv";
+import {
+  savePosTicket,
+  watchPosTickets,
+  type PosPaymentMethod,
+  type PosTicketRecord
+} from "../lib/firestoreClient";
 import { formatMoney } from "../lib/money";
 import { canTransitionOrder } from "../lib/order";
-import { formatDenverDateTime, formatWindow } from "../lib/time";
+import { denverDateKey, denverTodayKey, formatDenverDateTime, formatWindow } from "../lib/time";
 import type {
   MenuProduct,
   OrderRecord,
@@ -41,7 +48,13 @@ interface AdminPageProps {
   path: string;
 }
 
-type PaymentMethod = "cashapp" | "paypal" | "venmo" | "zelle" | "applepay";
+type PaymentMethod = PosPaymentMethod;
+
+interface PosState {
+  tickets: PosTicketRecord[];
+  loading: boolean;
+  error: string | null;
+}
 
 const statusLabels: Record<OrderStatus, string> = {
   new: "New",
@@ -53,6 +66,7 @@ const statusLabels: Record<OrderStatus, string> = {
 };
 
 const paymentLabels: Record<PaymentMethod, string> = {
+  cash: "Cash",
   cashapp: "Cash App",
   paypal: "PayPal",
   venmo: "Venmo",
@@ -83,6 +97,7 @@ function slugify(value: string) {
 function methodUrl(method: PaymentMethod, settings: PaymentSettings, cents: number) {
   const amount = (cents / 100).toFixed(2);
   const note = encodeURIComponent("Bangin Bustos Tamales POS ticket");
+  if (method === "cash") return "";
   if (method === "cashapp") return `https://cash.app/$${settings.cashAppCashtag}/${amount}`;
   if (method === "paypal") return `https://paypal.me/${settings.paypalMe}/${amount}`;
   if (method === "venmo") {
@@ -92,11 +107,34 @@ function methodUrl(method: PaymentMethod, settings: PaymentSettings, cents: numb
   return settings.applePayNote;
 }
 
+function usePosTickets(): PosState {
+  const [tickets, setTickets] = useState<PosTicketRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    return watchPosTickets(
+      (data) => {
+        setTickets(data);
+        setLoading(false);
+        setError(null);
+      },
+      (err) => {
+        setError(err.message);
+        setLoading(false);
+      }
+    );
+  }, []);
+
+  return { tickets, loading, error };
+}
+
 export function AdminPage({ path }: AdminPageProps) {
   const [orders, setOrders] = useState<OrderRecord[]>(sampleOrders);
   const [products, setProducts] = useState<MenuProduct[]>(menuProducts);
   const [payments, setPayments] = useState<PaymentSettings>(initialPaymentSettings);
   const [query, setQuery] = useState("");
+  const pos = usePosTickets();
   const title = adminTitle(path);
 
   const filteredOrders = useMemo(() => {
@@ -128,7 +166,7 @@ export function AdminPage({ path }: AdminPageProps) {
         <p>Firebase Auth admin claims protect these routes in production.</p>
       </section>
 
-      {title === "Dashboard" && <Dashboard orders={orders} products={products} />}
+      {title === "Dashboard" && <Dashboard pos={pos} products={products} />}
       {title === "Live POS" && <PosView products={products} payments={payments} />}
       {title === "Orders" && (
         <OrdersView
@@ -143,17 +181,24 @@ export function AdminPage({ path }: AdminPageProps) {
       {title === "Vendor" && <VendorAdminView />}
       {title === "Contacts" && <ContactsView />}
       {title === "Settings" && <SettingsView payments={payments} setPayments={setPayments} />}
-      {title === "Exports" && <ExportsView orders={orders} />}
+      {title === "Exports" && <ExportsView pos={pos} />}
     </main>
   );
 }
 
-function Dashboard({ orders, products }: { orders: OrderRecord[]; products: MenuProduct[] }) {
-  const dueToday = orders.filter((order) => order.status !== "canceled");
-  const estimatedSales = dueToday.reduce((sum, order) => sum + order.totals.totalCents, 0);
-  const productTotals = dueToday.flatMap((order) => order.items).reduce<Record<string, number>>(
+function Dashboard({ pos, products }: { pos: PosState; products: MenuProduct[] }) {
+  const todayKey = denverTodayKey();
+  const paidToday = pos.tickets.filter(
+    (ticket) => ticket.status === "paid" && denverDateKey(ticket.createdAtUtc) === todayKey
+  );
+  const revenueToday = paidToday.reduce((sum, ticket) => sum + ticket.totalCents, 0);
+  const itemsToday = paidToday.reduce(
+    (sum, ticket) => sum + ticket.items.reduce((count, item) => count + item.quantity, 0),
+    0
+  );
+  const productTotals = paidToday.flatMap((ticket) => ticket.items).reduce<Record<string, number>>(
     (acc, item) => {
-      acc[item.productName] = (acc[item.productName] ?? 0) + item.quantity * item.unitQuantity;
+      acc[item.productName] = (acc[item.productName] ?? 0) + item.quantity;
       return acc;
     },
     {}
@@ -162,40 +207,42 @@ function Dashboard({ orders, products }: { orders: OrderRecord[]; products: Menu
   return (
     <>
       <div className="metric-grid">
-        <Metric icon={ClipboardCheck} label="New requests" value={orders.filter((o) => o.status === "new").length} />
-        <Metric icon={CreditCard} label="POS items" value={products.filter((p) => p.status === "active").length} />
-        <Metric icon={Package} label="Tamales due" value={Object.values(productTotals).reduce((a, b) => a + b, 0)} />
-        <Metric icon={Download} label="Estimated sales" value={formatMoney(estimatedSales)} />
+        <Metric icon={Download} label="Sales today" value={formatMoney(revenueToday)} />
+        <Metric icon={ClipboardCheck} label="Tickets today" value={paidToday.length} />
+        <Metric icon={Package} label="Items today" value={itemsToday} />
+        <Metric icon={CreditCard} label="Active menu" value={products.filter((p) => p.status === "active").length} />
       </div>
+
+      {pos.error && <p className="muted">Live sales unavailable: {pos.error}</p>}
+
       <section className="admin-grid">
         <article className="admin-card">
-          <h2>Production Summary</h2>
-          {Object.entries(productTotals).map(([name, count]) => (
-            <div className="admin-row" key={name}>
-              <span>{name}</span>
-              <strong>{count} tamales</strong>
-            </div>
-          ))}
+          <h2>Today by item</h2>
+          {pos.loading ? (
+            <p className="muted">Loading sales…</p>
+          ) : Object.keys(productTotals).length === 0 ? (
+            <p className="muted">No sales yet today. Ring one up in Live POS.</p>
+          ) : (
+            Object.entries(productTotals).map(([name, count]) => (
+              <div className="admin-row" key={name}>
+                <span>{name}</span>
+                <strong>{count} sold</strong>
+              </div>
+            ))
+          )}
         </article>
         <article className="admin-card">
-          <h2>Quick Actions</h2>
-          <div className="admin-row">
-            <span>Open the phone-first sales screen</span>
-            <strong>Live POS</strong>
-          </div>
-          <div className="admin-row">
-            <span>Add single-serve items</span>
-            <strong>Menu</strong>
-          </div>
-        </article>
-        <article className="admin-card">
-          <h2>Active Vendor Session</h2>
-          {vendorSessions.map((session) => (
-            <div className="admin-row" key={session.id}>
-              <span>{session.name}</span>
-              <strong>{session.ordersEnabled ? "Orders on" : "Orders off"}</strong>
-            </div>
-          ))}
+          <h2>Recent sales</h2>
+          {pos.tickets.length === 0 ? (
+            <p className="muted">Sales will appear here as you take them.</p>
+          ) : (
+            pos.tickets.slice(0, 6).map((ticket) => (
+              <div className="admin-row" key={ticket.id}>
+                <span>{formatDenverDateTime(ticket.createdAtUtc)}</span>
+                <strong>{formatMoney(ticket.totalCents)}</strong>
+              </div>
+            ))
+          )}
         </article>
       </section>
     </>
@@ -215,7 +262,9 @@ function Metric({ icon: Icon, label, value }: { icon: typeof CalendarDays; label
 function PosView({ products, payments }: { products: MenuProduct[]; payments: PaymentSettings }) {
   const [items, setItems] = useState<PosTicketItem[]>([]);
   const [checkout, setCheckout] = useState(false);
-  const [method, setMethod] = useState<PaymentMethod>("cashapp");
+  const [method, setMethod] = useState<PaymentMethod>("cash");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const activeProducts = products.filter((product) => product.status === "active");
   const subtotalCents = items.reduce((sum, item) => sum + item.quantity * item.unitPriceCents, 0);
   const taxCents = Math.round((subtotalCents * businessSettings.taxRateBps) / 10000);
@@ -254,7 +303,22 @@ function PosView({ products, payments }: { products: MenuProduct[]; payments: Pa
   function clearTicket() {
     setItems([]);
     setCheckout(false);
-    setMethod("cashapp");
+    setMethod("cash");
+    setSaveError(null);
+  }
+
+  async function handleMarkPaid() {
+    if (items.length === 0 || saving) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await savePosTicket({ items, subtotalCents, taxCents, totalCents, paymentMethod: method });
+      clearTicket();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Could not save the sale.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -345,14 +409,24 @@ function PosView({ products, payments }: { products: MenuProduct[]; payments: Pa
                 </label>
               ))}
             </fieldset>
-            <QRCodePanel
-              url={methodUrl(method, payments, totalCents)}
-              title={`Pay with ${paymentLabels[method]}`}
-              eventName={formatMoney(totalCents)}
-              alt={`QR code for ${paymentLabels[method]} payment`}
-            />
-            <button className="button button-primary" type="button" onClick={clearTicket}>
-              Mark Paid + New Ticket
+            {method === "cash" ? (
+              <p className="muted">Collect cash from the customer, then tap Mark Paid.</p>
+            ) : (
+              <QRCodePanel
+                url={methodUrl(method, payments, totalCents)}
+                title={`Pay with ${paymentLabels[method]}`}
+                eventName={formatMoney(totalCents)}
+                alt={`QR code for ${paymentLabels[method]} payment`}
+              />
+            )}
+            {saveError && <p className="muted">Could not save: {saveError}</p>}
+            <button
+              className="button button-primary"
+              type="button"
+              onClick={handleMarkPaid}
+              disabled={saving}
+            >
+              {saving ? "Saving…" : "Mark Paid + New Ticket"}
             </button>
           </div>
         )}
@@ -688,22 +762,62 @@ function SettingsView({
   );
 }
 
-function ExportsView({ orders }: { orders: OrderRecord[] }) {
+function ExportsView({ pos }: { pos: PosState }) {
+  const paid = pos.tickets.filter((ticket) => ticket.status === "paid");
+  const totalCents = paid.reduce((sum, ticket) => sum + ticket.totalCents, 0);
+
+  function exportCsv() {
+    const header = ["Ticket", "Date (Denver)", "Payment", "Items", "Subtotal", "Tax", "Total"];
+    const rows = paid.map((ticket) => [
+      ticket.ticketNumber,
+      formatDenverDateTime(ticket.createdAtUtc),
+      paymentLabels[ticket.paymentMethod],
+      ticket.items.map((item) => `${item.quantity}x ${item.productName}`).join("; "),
+      (ticket.subtotalCents / 100).toFixed(2),
+      (ticket.taxCents / 100).toFixed(2),
+      (ticket.totalCents / 100).toFixed(2)
+    ]);
+    downloadCsv(`bbt-pos-sales-${denverTodayKey()}.csv`, [header, ...rows]);
+  }
+
   return (
     <section className="admin-card">
       <FileText size={24} />
-      <h2>Production Report</h2>
-      {orders.map((order) => (
-        <div className="production-row" key={order.id}>
-          <span>{order.orderNumber}</span>
-          <strong>{order.customer.name}</strong>
-          <span>{order.items.map((item) => `${item.quantity} ${item.variantLabel} ${item.productName}`).join(", ")}</span>
-          <span>{statusLabels[order.status]}</span>
-          <button className="icon-button" type="button" aria-label={`View ${order.orderNumber}`}>
-            <Eye size={18} />
-          </button>
-        </div>
-      ))}
+      <div className="toolbar">
+        <h2>POS Sales Report</h2>
+        <button
+          className="button button-primary"
+          type="button"
+          onClick={exportCsv}
+          disabled={paid.length === 0}
+        >
+          <Download size={18} />
+          Export CSV
+        </button>
+      </div>
+      {pos.loading ? (
+        <p className="muted">Loading sales…</p>
+      ) : pos.error ? (
+        <p className="muted">Sales unavailable: {pos.error}</p>
+      ) : paid.length === 0 ? (
+        <p className="muted">No sales recorded yet. Take one in Live POS.</p>
+      ) : (
+        <>
+          <div className="admin-row">
+            <span>{paid.length} sales</span>
+            <strong>{formatMoney(totalCents)}</strong>
+          </div>
+          {paid.map((ticket) => (
+            <div className="production-row" key={ticket.id}>
+              <span>{ticket.ticketNumber}</span>
+              <strong>{formatDenverDateTime(ticket.createdAtUtc)}</strong>
+              <span>{ticket.items.map((item) => `${item.quantity} ${item.productName}`).join(", ")}</span>
+              <span>{paymentLabels[ticket.paymentMethod]}</span>
+              <strong>{formatMoney(ticket.totalCents)}</strong>
+            </div>
+          ))}
+        </>
+      )}
     </section>
   );
 }

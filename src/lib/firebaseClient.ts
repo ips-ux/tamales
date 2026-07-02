@@ -23,12 +23,20 @@ export function firebaseConfigured() {
   );
 }
 
-function requireAuth(): Auth {
+export function getFirebaseApp() {
   if (!firebaseConfigured()) {
     throw new Error("Firebase client config is missing.");
   }
-  const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-  return getAuth(app);
+  return getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+}
+
+function requireAuth(): Auth {
+  return getAuth(getFirebaseApp());
+}
+
+export function getCurrentUser(): User | null {
+  if (!firebaseConfigured()) return null;
+  return getAuth(getFirebaseApp()).currentUser;
 }
 
 export function signIn(email: string, password: string) {

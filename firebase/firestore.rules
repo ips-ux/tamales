@@ -3,14 +3,26 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     /*
-      Bangin Bustos Tamales uses Firebase Cloud Functions with the Firebase
-      Admin SDK for database access. Public browsers should not talk to
-      Firestore directly for business data.
+      Bangin Bustos Tamales runs on the free Firebase Spark plan, so there is no
+      Cloud Functions / Admin SDK layer. The owner-only Live POS reads and writes
+      Firestore directly from the browser, gated by the `admin: true` custom claim.
 
-      Deploy these rules before launch to replace Firebase's temporary open
-      starter rule. Server-side service account calls are not constrained by
-      these client SDK rules.
+      Everything is denied by default. Only collections explicitly matched below
+      are reachable, and only by an authenticated admin. The public preorder flow
+      is intentionally not exposed here yet; add narrowly-scoped rules for it when
+      that surface goes live.
     */
+
+    function isAdmin() {
+      return request.auth != null && request.auth.token.admin == true;
+    }
+
+    // Live POS sales. Owner-only, full access.
+    match /posTickets/{ticketId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Default deny for anything not matched above.
     match /{document=**} {
       allow read, write: if false;
     }

@@ -96,6 +96,29 @@ monthly cost is $0 to pocket change — but the alert catches surprises.
   `bustostamale.firebaseapp.com`) are automatically authorized for Firebase Auth, so no
   extra "authorized domains" configuration is needed for this hosting path.
 
+## Live POS (free tier)
+
+The owner-facing Live POS at `/admin/pos` is the one fully-live surface on the free plan.
+It talks to Firestore directly from the browser (no Cloud Function), so it costs nothing to run:
+
+- Building a ticket, choosing a payment method (Cash, Cash App, PayPal, Venmo, Zelle), and tapping
+  **Mark Paid + New Ticket** writes a document to the `posTickets` collection.
+- `/admin` (Dashboard) and `/admin/exports` read those tickets live — today's revenue, ticket and item
+  counts, recent sales, and a CSV download.
+- Firestore's on-device cache keeps the POS working with no signal; sales sync when the connection returns.
+
+### One-time setup
+
+1. **Enable Firestore** (free) in the Firebase Console → Build → Firestore Database → Create database.
+2. **Deploy the security rules** — a push to `main` does this via CI (`--only hosting,firestore`), or run
+   `firebase deploy --only firestore:rules` locally. The rules restrict `posTickets` to `admin: true` users.
+3. **Confirm the owner has the admin claim** — `npm --prefix functions run set-admin -- owner@email`
+   (already done for the current owner account).
+4. Sign in at `/login` with the owner account and open `/admin/pos`.
+
+Access is gated by the admin claim, so only the owner's signed-in account can read or write sales. No other
+collection is exposed to the browser.
+
 ## Manual deploy from a workstation
 
 ```powershell
