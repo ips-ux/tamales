@@ -54,18 +54,21 @@ jobs:
 
       # Authenticate firebase-tools as a service account via Application
       # Default Credentials. The secret is a full service-account JSON.
+      # (Repo secret is named FIREBASE_SERVICE_ACCOUNTS, plural.)
       - name: Write service account key
         env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNTS }}
         run: |
           printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-key.json"
           echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-key.json" >> "$GITHUB_ENV"
 
-      # Deploying `functions` requires the project on the Blaze plan. If you are
-      # not on Blaze yet, drop `,functions` from the --only list to ship the
-      # static site while the backend is set up separately.
+      # Deploying `functions` requires the Blaze plan, so CI currently ships
+      # Hosting + Firestore rules/indexes only. Once Blaze is enabled on the
+      # project, change --only to hosting,firestore,functions to bring the
+      # /api backend live. (The functions build step above still runs so CI
+      # catches compile errors either way.)
       - name: Deploy to Firebase
-        run: npx --yes firebase-tools deploy --only hosting,firestore,functions --project bustostamale --non-interactive
+        run: npx --yes firebase-tools deploy --only hosting,firestore --project bustostamale --non-interactive
 
       - name: Remove service account key
         if: always()

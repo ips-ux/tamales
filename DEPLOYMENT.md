@@ -25,7 +25,7 @@ Nothing here should ever be committed to the repo.
 
 | Secret | Value | Where to get it |
 | --- | --- | --- |
-| `FIREBASE_SERVICE_ACCOUNT` | Full JSON of a deploy service account | See below |
+| `FIREBASE_SERVICE_ACCOUNTS` | Full JSON of a deploy service account | See below |
 | `VITE_FIREBASE_API_KEY` | Web API key | Firebase Console → Project settings → General → Your apps (Web) |
 | `VITE_FIREBASE_AUTH_DOMAIN` | `bustostamale.firebaseapp.com` | Same place (or your local `.env.local`) |
 | `VITE_FIREBASE_PROJECT_ID` | `bustostamale` | Same place |
@@ -61,11 +61,37 @@ The existing Admin SDK key in `.secrets/` is meant for local admin scripts (seed
 setting admin claims). You can reuse it for CI if its role can deploy, but a dedicated
 `github-deployer` account is cleaner and easier to revoke.
 
-## Prerequisites
+## Current state: free (Spark) plan
 
-- **Blaze (pay-as-you-go) plan** is required to deploy Cloud Functions. If the project
-  is still on Spark, remove `,functions` from the `--only` list in the workflow until
-  Blaze is enabled, and the static site + Firestore rules will still deploy.
+The project is currently on the free Spark plan, which cannot deploy Cloud Functions.
+CI therefore deploys **Hosting + Firestore rules/indexes only**. Two things are
+intentionally parked until Blaze:
+
+1. `.github/workflows/deploy.yml` deploys `--only hosting,firestore` (no `functions`).
+2. `firebase.json` has the `/api/**` → `api` function rewrite removed, because Hosting
+   deploys fail if a rewrite targets a function that does not exist in the project.
+
+Consequence: the public site, login, and static pages work, but anything that calls
+`/api/**` (order submission, live admin data) is offline until Blaze is enabled.
+
+### Switching the backend on (Blaze)
+
+When the owner enables Blaze (Firebase Console → Settings → Usage and billing):
+
+1. Restore the rewrite in `firebase.json` (above the SPA catch-all):
+   ```json
+   { "source": "/api/**", "function": "api" }
+   ```
+2. In the workflow's deploy step, change `--only hosting,firestore` to
+   `--only hosting,firestore,functions`.
+3. Push to `main`; set a **budget alert** ($5–10) in Google Cloud Billing.
+
+At this app's traffic, Blaze's pay-as-you-go pricing still includes the free-tier
+allowances (2M function invocations/month, Firestore free quotas), so the realistic
+monthly cost is $0 to pocket change — but the alert catches surprises.
+
+## Notes
+
 - Firebase Hosting's default domains (`bustostamale.web.app`,
   `bustostamale.firebaseapp.com`) are automatically authorized for Firebase Auth, so no
   extra "authorized domains" configuration is needed for this hosting path.
