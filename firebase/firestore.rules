@@ -1,0 +1,18 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    /*
+      Bangin Bustos Tamales uses Firebase Cloud Functions with the Firebase
+      Admin SDK for database access. Public browsers should not talk to
+      Firestore directly for business data.
+
+      Deploy these rules before launch to replace Firebase's temporary open
+      starter rule. Server-side service account calls are not constrained by
+      these client SDK rules.
+    */
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

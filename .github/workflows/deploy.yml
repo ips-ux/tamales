@@ -1,0 +1,72 @@
+name: Deploy to Firebase
+
+# Builds the Vite frontend and Firebase Functions, then deploys Hosting,
+# Firestore rules/indexes, and Functions to the `bustostamale` project.
+# Runs on every push to `main`, and can be triggered manually.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never run two deploys at once; let an in-progress deploy finish.
+concurrency:
+  group: firebase-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install app dependencies
+        run: npm ci
+
+      - name: Install functions dependencies
+        run: npm --prefix functions ci
+
+      # These VITE_* values are public browser config (baked into the client
+      # bundle), not Admin credentials. They live in GitHub Actions secrets so
+      # the repo never carries an .env file.
+      - name: Build frontend
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+        run: npm run build
+
+      - name: Build functions
+        run: npm --prefix functions run build
+
+      # Authenticate firebase-tools as a service account via Application
+      # Default Credentials. The secret is a full service-account JSON.
+      - name: Write service account key
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-key.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-key.json" >> "$GITHUB_ENV"
+
+      # Deploying `functions` requires the project on the Blaze plan. If you are
+      # not on Blaze yet, drop `,functions` from the --only list to ship the
+      # static site while the backend is set up separately.
+      - name: Deploy to Firebase
+        run: npx --yes firebase-tools deploy --only hosting,firestore,functions --project bustostamale --non-interactive
+
+      - name: Remove service account key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/firebase-key.json"
