@@ -1,14 +1,16 @@
 import { ArrowRight, CalendarClock, MapPin, ShieldCheck } from "lucide-react";
 import { navigate } from "../App";
-import { availabilityWindows, businessSettings, menuProducts } from "../data/fixtures";
+import { availabilityWindows, menuProducts } from "../data/fixtures";
+import { useBusinessSettings } from "../lib/businessSettings";
 import { formatMoney } from "../lib/money";
 import { formatWindow } from "../lib/time";
 
 export function HomePage() {
+  const businessSettings = useBusinessSettings();
   return (
     <main>
       <section className="hero-section">
-        <img src="/media/tamales_hero.png" alt="" className="hero-image" />
+        <img src="/media/tamales_hero.webp" alt="" className="hero-image" />
         <div className="hero-overlay" />
         <div className="hero-textile" aria-hidden="true" />
         <div className="hero-steam" aria-hidden="true">

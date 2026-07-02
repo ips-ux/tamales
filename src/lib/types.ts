@@ -18,7 +18,8 @@ export interface BusinessSettings {
   id: string;
   name: string;
   shortName: string;
-  timezone: "America/Denver";
+  /** IANA timezone the business operates in, e.g. "America/Denver". */
+  timezone: string;
   orderPolicy: string;
   paymentPolicy: string;
   contactPhone: string;
@@ -47,6 +48,8 @@ export interface MenuProduct {
   spiceLevel: SpiceLevel;
   allergyNotice: string;
   imageUrl: string;
+  /** Per-tamale price used by the Live POS; batch pricing lives in variants. 0 hides the item from the POS. */
+  singlePriceCents: number;
   status: ProductStatus;
   bulkMenuEnabled: boolean;
   showWhenSoldOut: boolean;

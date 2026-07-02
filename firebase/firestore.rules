@@ -22,6 +22,14 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Owner-editable business settings (timezone, tax rate, contact info).
+    // Publicly readable so the customer site can show current contact details;
+    // only the owner can change them.
+    match /settings/business {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     // Default deny for anything not matched above.
     match /{document=**} {
       allow read, write: if false;

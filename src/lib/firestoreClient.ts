@@ -1,6 +1,7 @@
 import {
   addDoc,
   collection,
+  doc,
   getFirestore,
   initializeFirestore,
   onSnapshot,
@@ -8,6 +9,7 @@ import {
   persistentLocalCache,
   persistentMultipleTabManager,
   query,
+  setDoc,
   type Firestore
 } from "firebase/firestore";
 import { firebaseConfigured, getCurrentUser, getFirebaseApp } from "./firebaseClient";
@@ -27,6 +29,8 @@ export interface NewPosTicket {
   taxCents: number;
   totalCents: number;
   paymentMethod: PosPaymentMethod;
+  /** Practice/demo sales; kept out of real reporting. */
+  isTest: boolean;
 }
 
 export interface PosTicketRecord extends NewPosTicket {
@@ -102,6 +106,7 @@ export function watchPosTickets(
           taxCents: (data.taxCents as number) ?? 0,
           totalCents: (data.totalCents as number) ?? 0,
           paymentMethod: (data.paymentMethod as PosPaymentMethod) ?? "cash",
+          isTest: Boolean(data.isTest),
           status: (data.status as "paid" | "void") ?? "paid",
           soldByEmail: (data.soldByEmail as string | null) ?? null,
           createdAtUtc: (data.createdAtUtc as string) ?? new Date().toISOString()
@@ -111,6 +116,57 @@ export function watchPosTickets(
     },
     (error) => onError(error)
   );
+}
+
+// The owner-editable subset of business settings, stored as a single public
+// document so the customer site shows current contact info and the POS charges
+// the current tax rate.
+export interface EditableBusinessSettings {
+  timezone: string;
+  taxRateBps: number;
+  contactPhone: string;
+  contactEmail: string;
+  instagramHandle: string;
+}
+
+const SETTINGS_COLLECTION = "settings";
+const BUSINESS_SETTINGS_DOC = "business";
+
+export function watchStoredBusinessSettings(
+  onData: (settings: Partial<EditableBusinessSettings>) => void,
+  onError: (error: Error) => void
+): () => void {
+  if (!firebaseConfigured()) {
+    onError(new Error("Firebase is not configured."));
+    return () => undefined;
+  }
+  return onSnapshot(
+    doc(db(), SETTINGS_COLLECTION, BUSINESS_SETTINGS_DOC),
+    (snapshot) => {
+      const data = snapshot.data();
+      if (!data) {
+        onData({});
+        return;
+      }
+      const settings: Partial<EditableBusinessSettings> = {};
+      if (typeof data.timezone === "string" && data.timezone) settings.timezone = data.timezone;
+      if (typeof data.taxRateBps === "number" && data.taxRateBps >= 0) {
+        settings.taxRateBps = data.taxRateBps;
+      }
+      if (typeof data.contactPhone === "string") settings.contactPhone = data.contactPhone;
+      if (typeof data.contactEmail === "string") settings.contactEmail = data.contactEmail;
+      if (typeof data.instagramHandle === "string") settings.instagramHandle = data.instagramHandle;
+      onData(settings);
+    },
+    (error) => onError(error)
+  );
+}
+
+export async function saveBusinessSettings(settings: EditableBusinessSettings): Promise<void> {
+  if (!firebaseConfigured()) {
+    throw new Error("Firebase is not configured. Add VITE_FIREBASE values to .env.local.");
+  }
+  await setDoc(doc(db(), SETTINGS_COLLECTION, BUSINESS_SETTINGS_DOC), settings, { merge: true });
 }
 
 function buildTicketNumber(date: Date): string {

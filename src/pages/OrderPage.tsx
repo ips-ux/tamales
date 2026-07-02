@@ -5,10 +5,10 @@ import { OrderSummary } from "../components/OrderSummary";
 import { ProductCard } from "../components/ProductCard";
 import {
   availabilityWindows,
-  businessSettings,
   menuProducts,
   pickupLocations
 } from "../data/fixtures";
+import { useBusinessSettings } from "../lib/businessSettings";
 import { createLocalOrderRecord, generateIdempotencyKey, orderItemCount } from "../lib/order";
 import { formatWindow, isWindowSelectable } from "../lib/time";
 import type { BulkOrderInfo, CartSelection, CustomerInfo, FulfillmentType, OrderRecord } from "../lib/types";
@@ -43,6 +43,7 @@ function quantityMapToSelections(quantities: Record<string, number>): CartSelect
 }
 
 export function OrderPage() {
+  const businessSettings = useBusinessSettings();
   const [step, setStep] = useState(0);
   const [fulfillmentType, setFulfillmentType] = useState<FulfillmentType>("scheduled_pickup");
   const [windowId, setWindowId] = useState("sat-morning-westminster");

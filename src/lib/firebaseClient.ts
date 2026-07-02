@@ -1,11 +1,15 @@
 import { getApp, getApps, initializeApp } from "firebase/app";
 import {
+  EmailAuthProvider,
   getAuth,
   getIdToken,
   getIdTokenResult,
   onAuthStateChanged,
+  reauthenticateWithCredential,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signOut,
+  updatePassword,
   type Auth,
   type User
 } from "firebase/auth";
@@ -45,6 +49,22 @@ export function signIn(email: string, password: string) {
 
 export function signOutCurrentUser() {
   return signOut(requireAuth());
+}
+
+// Firebase requires a recent sign-in before allowing a password change, so
+// reauthenticate with the current password first.
+export async function changePassword(currentPassword: string, newPassword: string) {
+  const user = getCurrentUser();
+  if (!user?.email) {
+    throw new Error("You need to be signed in to change your password.");
+  }
+  const credential = EmailAuthProvider.credential(user.email, currentPassword);
+  await reauthenticateWithCredential(user, credential);
+  await updatePassword(user, newPassword);
+}
+
+export function sendPasswordReset(email: string) {
+  return sendPasswordResetEmail(requireAuth(), email);
 }
 
 export function watchAuth(callback: (user: User | null) => void) {

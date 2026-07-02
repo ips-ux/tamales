@@ -2,9 +2,11 @@ import { ArrowRight, ClipboardList, Info, RotateCcw, UserPlus } from "lucide-rea
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { navigate } from "../App";
 import { QRCodePanel } from "../components/QRCodePanel";
-import { businessSettings, vendorSessions } from "../data/fixtures";
+import { vendorSessions } from "../data/fixtures";
+import { useBusinessSettings } from "../lib/businessSettings";
 
 export function VendorPage({ sessionToken }: { sessionToken: string }) {
+  const businessSettings = useBusinessSettings();
   const session = vendorSessions.find((item) => item.publicToken === sessionToken);
   const [mode, setMode] = useState<"home" | "qr" | "waitlist" | "thanks">("home");
   const orderUrl = useMemo(

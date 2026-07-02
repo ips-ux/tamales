@@ -1,7 +1,9 @@
-import { Instagram, Phone } from "lucide-react";
-import { businessSettings } from "../data/fixtures";
+import { Instagram, Mail, Phone } from "lucide-react";
+import { useBusinessSettings } from "../lib/businessSettings";
 
 export function AboutPage() {
+  const business = useBusinessSettings();
+
   return (
     <main className="page-shell">
       <section className="split-section">
@@ -13,18 +15,22 @@ export function AboutPage() {
             and direct owner confirmation. The food stays personal; the ordering stays clean.
           </p>
           <div className="contact-pills">
-            <a href={`tel:${businessSettings.contactPhone}`}>
+            <a href={`tel:${business.contactPhone}`}>
               <Phone size={17} />
-              {businessSettings.contactPhone}
+              {business.contactPhone}
             </a>
-            <a href={`https://instagram.com/${businessSettings.instagramHandle.replace("@", "")}`}>
+            <a href={`mailto:${business.contactEmail}`}>
+              <Mail size={17} />
+              {business.contactEmail}
+            </a>
+            <a href={`https://instagram.com/${business.instagramHandle.replace("@", "")}`}>
               <Instagram size={17} />
-              {businessSettings.instagramHandle}
+              {business.instagramHandle}
             </a>
           </div>
         </div>
         <div className="about-image-frame">
-          <img src="/media/tamales_hero.png" alt="" />
+          <img src="/media/tamales_hero.webp" alt="" />
         </div>
       </section>
     </main>

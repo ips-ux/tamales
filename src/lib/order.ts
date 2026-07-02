@@ -1,4 +1,5 @@
-import { businessSettings, menuProducts } from "../data/fixtures";
+import { menuProducts } from "../data/fixtures";
+import { getBusinessSettings } from "./businessSettings";
 import { calculateTax } from "./money";
 import type {
   CartSelection,
@@ -61,7 +62,7 @@ export function buildOrderLines(
 
 export function calculateTotals(
   lines: OrderLineSnapshot[],
-  taxRateBps = businessSettings.taxRateBps
+  taxRateBps = getBusinessSettings().taxRateBps
 ): OrderTotals {
   const subtotalCents = lines.reduce((sum, line) => sum + line.lineTotalCents, 0);
   const taxCents = calculateTax(subtotalCents, taxRateBps);
@@ -80,7 +81,7 @@ export function orderItemCount(selections: CartSelection[]): number {
 export function createLocalOrderRecord(
   draft: OrderDraft,
   products: MenuProduct[] = menuProducts,
-  settings: Pick<BusinessSettings, "taxRateBps"> = businessSettings
+  settings: Pick<BusinessSettings, "taxRateBps"> = getBusinessSettings()
 ): OrderRecord {
   const lines = buildOrderLines(draft.items, products);
   const now = new Date().toISOString();

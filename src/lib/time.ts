@@ -1,42 +1,61 @@
+import { getBusinessSettings } from "./businessSettings";
 import type { AvailabilityWindow } from "./types";
 
-const denverDateTime = new Intl.DateTimeFormat("en-US", {
-  timeZone: "America/Denver",
-  weekday: "short",
-  month: "short",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit"
-});
-
-const denverTime = new Intl.DateTimeFormat("en-US", {
-  timeZone: "America/Denver",
-  hour: "numeric",
-  minute: "2-digit"
-});
-
-// en-CA renders as YYYY-MM-DD, giving a sortable/comparable day key in Denver time.
-const denverDayKey = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "America/Denver",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit"
-});
-
-export function denverDateKey(iso: string): string {
-  return denverDayKey.format(new Date(iso));
+interface ZoneFormatters {
+  dateTime: Intl.DateTimeFormat;
+  time: Intl.DateTimeFormat;
+  dayKey: Intl.DateTimeFormat;
 }
 
-export function denverTodayKey(): string {
-  return denverDayKey.format(new Date());
+// Intl.DateTimeFormat construction is expensive, so cache per timezone; the
+// business timezone is owner-editable and can change at runtime.
+const formatterCache = new Map<string, ZoneFormatters>();
+
+function formatters(): ZoneFormatters {
+  const timeZone = getBusinessSettings().timezone || "America/Denver";
+  let entry = formatterCache.get(timeZone);
+  if (!entry) {
+    entry = {
+      dateTime: new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit"
+      }),
+      time: new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        hour: "numeric",
+        minute: "2-digit"
+      }),
+      // en-CA renders as YYYY-MM-DD, giving a sortable/comparable day key.
+      dayKey: new Intl.DateTimeFormat("en-CA", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      })
+    };
+    formatterCache.set(timeZone, entry);
+  }
+  return entry;
 }
 
-export function formatDenverDateTime(iso: string): string {
-  return denverDateTime.format(new Date(iso));
+export function businessDateKey(iso: string): string {
+  return formatters().dayKey.format(new Date(iso));
+}
+
+export function businessTodayKey(): string {
+  return formatters().dayKey.format(new Date());
+}
+
+export function formatBusinessDateTime(iso: string): string {
+  return formatters().dateTime.format(new Date(iso));
 }
 
 export function formatWindow(window: AvailabilityWindow): string {
-  return `${formatDenverDateTime(window.startsAtUtc)} - ${denverTime.format(
+  return `${formatBusinessDateTime(window.startsAtUtc)} - ${formatters().time.format(
     new Date(window.endsAtUtc)
   )}`;
 }

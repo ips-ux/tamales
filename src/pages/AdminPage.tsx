@@ -1,47 +1,52 @@
 import {
+  ArrowLeft,
   CalendarDays,
+  ChevronRight,
   ClipboardCheck,
   CreditCard,
   Download,
-  Eye,
   FileText,
-  ListChecks,
+  FlaskConical,
+  KeyRound,
   Package,
+  Pencil,
   Plus,
   QrCode,
-  Search,
   Settings,
   Trash2,
-  Users
+  Users,
+  X
 } from "lucide-react";
-import { Dispatch, FormEvent, SetStateAction, useEffect, useMemo, useState } from "react";
+import { Dispatch, FormEvent, SetStateAction, useEffect, useState } from "react";
+import { ChangePasswordForm } from "../components/ChangePasswordForm";
+import { ImagePicker } from "../components/ImagePicker";
 import { QRCodePanel } from "../components/QRCodePanel";
 import {
   availabilityWindows,
-  businessSettings,
   contactSubmissions,
   menuProducts,
   paymentSettings as initialPaymentSettings,
   pickupLocations,
-  sampleOrders,
   vendorSessions
 } from "../data/fixtures";
+import { useBusinessSettings } from "../lib/businessSettings";
 import { downloadCsv } from "../lib/csv";
 import {
+  saveBusinessSettings,
   savePosTicket,
   watchPosTickets,
   type PosPaymentMethod,
   type PosTicketRecord
 } from "../lib/firestoreClient";
 import { formatMoney } from "../lib/money";
-import { canTransitionOrder } from "../lib/order";
-import { denverDateKey, denverTodayKey, formatDenverDateTime, formatWindow } from "../lib/time";
+import { businessDateKey, businessTodayKey, formatBusinessDateTime, formatWindow } from "../lib/time";
 import type {
   MenuProduct,
-  OrderRecord,
-  OrderStatus,
+  MenuVariant,
   PaymentSettings,
-  PosTicketItem
+  PosTicketItem,
+  ProductStatus,
+  SpiceLevel
 } from "../lib/types";
 
 interface AdminPageProps {
@@ -55,15 +60,6 @@ interface PosState {
   loading: boolean;
   error: string | null;
 }
-
-const statusLabels: Record<OrderStatus, string> = {
-  new: "New",
-  confirmed: "Confirmed",
-  preparing: "Preparing",
-  ready: "Ready",
-  completed: "Completed",
-  canceled: "Canceled"
-};
 
 const paymentLabels: Record<PaymentMethod, string> = {
   cash: "Cash",
@@ -129,33 +125,28 @@ function usePosTickets(): PosState {
   return { tickets, loading, error };
 }
 
+const TEST_MODE_KEY = "bbt-test-mode";
+
 export function AdminPage({ path }: AdminPageProps) {
-  const [orders, setOrders] = useState<OrderRecord[]>(sampleOrders);
   const [products, setProducts] = useState<MenuProduct[]>(menuProducts);
   const [payments, setPayments] = useState<PaymentSettings>(initialPaymentSettings);
-  const [query, setQuery] = useState("");
-  const pos = usePosTickets();
+  const [testMode, setTestMode] = useState(() => localStorage.getItem(TEST_MODE_KEY) === "1");
+  const rawPos = usePosTickets();
   const title = adminTitle(path);
 
-  const filteredOrders = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return orders;
-    return orders.filter(
-      (order) =>
-        order.orderNumber.toLowerCase().includes(normalized) ||
-        order.customer.name.toLowerCase().includes(normalized) ||
-        order.customer.mobile.toLowerCase().includes(normalized)
-    );
-  }, [orders, query]);
+  // Every admin view sees only the current mode's tickets: real sales normally,
+  // practice sales while test mode is on.
+  const pos: PosState = {
+    ...rawPos,
+    tickets: rawPos.tickets.filter((ticket) => ticket.isTest === testMode)
+  };
 
-  function updateStatus(id: string, status: OrderStatus) {
-    setOrders((current) =>
-      current.map((order) =>
-        order.id === id && canTransitionOrder(order.status, status)
-          ? { ...order, status, updatedAtUtc: new Date().toISOString() }
-          : order
-      )
-    );
+  function toggleTestMode() {
+    setTestMode((current) => {
+      const next = !current;
+      localStorage.setItem(TEST_MODE_KEY, next ? "1" : "0");
+      return next;
+    });
   }
 
   return (
@@ -163,19 +154,22 @@ export function AdminPage({ path }: AdminPageProps) {
       <section className="admin-heading">
         <p className="eyebrow">Owner Area</p>
         <h1>{title}</h1>
-        <p>Firebase Auth admin claims protect these routes in production.</p>
+        <label className="toggle-row test-mode-toggle">
+          <input type="checkbox" checked={testMode} onChange={toggleTestMode} />
+          <span>Test mode</span>
+        </label>
       </section>
 
-      {title === "Dashboard" && <Dashboard pos={pos} products={products} />}
-      {title === "Live POS" && <PosView products={products} payments={payments} />}
-      {title === "Orders" && (
-        <OrdersView
-          orders={filteredOrders}
-          query={query}
-          setQuery={setQuery}
-          updateStatus={updateStatus}
-        />
+      {testMode && (
+        <div className="test-mode-banner" role="status">
+          <FlaskConical size={20} />
+          Test mode — sales you take now are practice only and stay out of real reports.
+        </div>
       )}
+
+      {title === "Dashboard" && <Dashboard pos={pos} products={products} />}
+      {title === "Live POS" && <PosView products={products} payments={payments} testMode={testMode} />}
+      {title === "Orders" && <OrdersView pos={pos} />}
       {title === "Menu" && <MenuView products={products} setProducts={setProducts} />}
       {title === "Availability" && <AvailabilityView />}
       {title === "Vendor" && <VendorAdminView />}
@@ -187,9 +181,9 @@ export function AdminPage({ path }: AdminPageProps) {
 }
 
 function Dashboard({ pos, products }: { pos: PosState; products: MenuProduct[] }) {
-  const todayKey = denverTodayKey();
+  const todayKey = businessTodayKey();
   const paidToday = pos.tickets.filter(
-    (ticket) => ticket.status === "paid" && denverDateKey(ticket.createdAtUtc) === todayKey
+    (ticket) => ticket.status === "paid" && businessDateKey(ticket.createdAtUtc) === todayKey
   );
   const revenueToday = paidToday.reduce((sum, ticket) => sum + ticket.totalCents, 0);
   const itemsToday = paidToday.reduce(
@@ -238,7 +232,7 @@ function Dashboard({ pos, products }: { pos: PosState; products: MenuProduct[] }
           ) : (
             pos.tickets.slice(0, 6).map((ticket) => (
               <div className="admin-row" key={ticket.id}>
-                <span>{formatDenverDateTime(ticket.createdAtUtc)}</span>
+                <span>{formatBusinessDateTime(ticket.createdAtUtc)}</span>
                 <strong>{formatMoney(ticket.totalCents)}</strong>
               </div>
             ))
@@ -259,20 +253,32 @@ function Metric({ icon: Icon, label, value }: { icon: typeof CalendarDays; label
   );
 }
 
-function PosView({ products, payments }: { products: MenuProduct[]; payments: PaymentSettings }) {
+function PosView({
+  products,
+  payments,
+  testMode
+}: {
+  products: MenuProduct[];
+  payments: PaymentSettings;
+  testMode: boolean;
+}) {
   const [items, setItems] = useState<PosTicketItem[]>([]);
   const [checkout, setCheckout] = useState(false);
+  const [ticketOpen, setTicketOpen] = useState(false);
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const activeProducts = products.filter((product) => product.status === "active");
+  const activeProducts = products.filter(
+    (product) => product.status === "active" && product.singlePriceCents > 0
+  );
+  const business = useBusinessSettings();
   const subtotalCents = items.reduce((sum, item) => sum + item.quantity * item.unitPriceCents, 0);
-  const taxCents = Math.round((subtotalCents * businessSettings.taxRateBps) / 10000);
+  const taxCents = Math.round((subtotalCents * business.taxRateBps) / 10000);
   const totalCents = subtotalCents + taxCents;
+  const itemCount = items.reduce((sum, item) => sum + item.quantity, 0);
 
   function addProduct(product: MenuProduct) {
-    const variant = product.variants[0];
-    if (!variant) return;
+    if (product.singlePriceCents <= 0) return;
     setItems((current) => {
       const existing = current.find((item) => item.productId === product.id);
       if (existing) {
@@ -286,7 +292,7 @@ function PosView({ products, payments }: { products: MenuProduct[]; payments: Pa
           productId: product.id,
           productName: product.name,
           quantity: 1,
-          unitPriceCents: variant.priceCents
+          unitPriceCents: product.singlePriceCents
         }
       ];
     });
@@ -303,6 +309,7 @@ function PosView({ products, payments }: { products: MenuProduct[]; payments: Pa
   function clearTicket() {
     setItems([]);
     setCheckout(false);
+    setTicketOpen(false);
     setMethod("cash");
     setSaveError(null);
   }
@@ -312,7 +319,14 @@ function PosView({ products, payments }: { products: MenuProduct[]; payments: Pa
     setSaving(true);
     setSaveError(null);
     try {
-      await savePosTicket({ items, subtotalCents, taxCents, totalCents, paymentMethod: method });
+      await savePosTicket({
+        items,
+        subtotalCents,
+        taxCents,
+        totalCents,
+        paymentMethod: method,
+        isTest: testMode
+      });
       clearTicket();
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could not save the sale.");
@@ -324,23 +338,54 @@ function PosView({ products, payments }: { products: MenuProduct[]; payments: Pa
   return (
     <section className="pos-shell">
       <div className="pos-products" aria-label="POS menu">
-        {activeProducts.map((product) => (
-          <button className="pos-product-button" key={product.id} type="button" onClick={() => addProduct(product)}>
-            <span>{product.name}</span>
-            <strong>{formatMoney(product.variants[0]?.priceCents ?? 0)}</strong>
-          </button>
-        ))}
+        {activeProducts.map((product) => {
+          const inTicket = items.find((item) => item.productId === product.id)?.quantity ?? 0;
+          return (
+            <button
+              className="pos-product-button"
+              key={product.id}
+              type="button"
+              onClick={() => addProduct(product)}
+            >
+              {inTicket > 0 && <span className="pos-tile-count">{inTicket}</span>}
+              <span>{product.name}</span>
+              <strong>{formatMoney(product.singlePriceCents)}</strong>
+            </button>
+          );
+        })}
+        {activeProducts.length === 0 && (
+          <p className="muted">No items have a single-tamale price yet. Set one in Menu.</p>
+        )}
       </div>
 
-      <aside className="pos-ticket" aria-label="Current ticket">
+      {ticketOpen && (
+        <button
+          className="pos-backdrop"
+          type="button"
+          aria-label="Close ticket"
+          onClick={() => setTicketOpen(false)}
+        />
+      )}
+
+      <aside className={`pos-ticket${ticketOpen ? " pos-ticket-open" : ""}`} aria-label="Current ticket">
         <div className="pos-ticket-header">
           <div>
-            <p className="eyebrow">Live Ticket</p>
+            <p className="eyebrow">{testMode ? "Test Ticket" : "Live Ticket"}</p>
             <h2>{formatMoney(totalCents)}</h2>
           </div>
-          <button className="button button-small" type="button" onClick={clearTicket} disabled={items.length === 0}>
-            Clear
-          </button>
+          <div className="button-row">
+            <button className="button button-small" type="button" onClick={clearTicket} disabled={items.length === 0}>
+              Clear
+            </button>
+            <button
+              className="button button-small pos-ticket-close"
+              type="button"
+              aria-label="Close ticket"
+              onClick={() => setTicketOpen(false)}
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         <div className="pos-ticket-lines">
@@ -431,76 +476,198 @@ function PosView({ products, payments }: { products: MenuProduct[]; payments: Pa
           </div>
         )}
       </aside>
+
+      <div className="pos-bar">
+        <button
+          className="pos-bar-summary"
+          type="button"
+          onClick={() => setTicketOpen(true)}
+          disabled={items.length === 0}
+        >
+          <span>
+            {itemCount} item{itemCount === 1 ? "" : "s"}
+          </span>
+          <strong>{formatMoney(totalCents)}</strong>
+        </button>
+        <button
+          className="button button-primary"
+          type="button"
+          disabled={items.length === 0}
+          onClick={() => {
+            setCheckout(true);
+            setTicketOpen(true);
+          }}
+        >
+          Charge {formatMoney(totalCents)}
+        </button>
+      </div>
     </section>
   );
 }
 
-function OrdersView({
-  orders,
-  query,
-  setQuery,
-  updateStatus
-}: {
-  orders: OrderRecord[];
-  query: string;
-  setQuery: (value: string) => void;
-  updateStatus: (id: string, status: OrderStatus) => void;
-}) {
+function OrdersView({ pos }: { pos: PosState }) {
+  const [group, setGroup] = useState<"overview" | "pos" | "preorders">("overview");
+  const todayKey = businessTodayKey();
+  const paid = pos.tickets.filter((ticket) => ticket.status === "paid");
+  const paidToday = paid.filter((ticket) => businessDateKey(ticket.createdAtUtc) === todayKey);
+  const revenueToday = paidToday.reduce((sum, ticket) => sum + ticket.totalCents, 0);
+  const revenueAllTime = paid.reduce((sum, ticket) => sum + ticket.totalCents, 0);
+  const lastSale = paid[0];
+
+  if (group === "pos") {
+    return <PosOrdersDetail pos={pos} onBack={() => setGroup("overview")} />;
+  }
+
+  if (group === "preorders") {
+    return (
+      <section className="admin-card">
+        <div className="toolbar">
+          <button className="button button-small" type="button" onClick={() => setGroup("overview")}>
+            <ArrowLeft size={16} />
+            All orders
+          </button>
+        </div>
+        <h2>Batch Pre-orders</h2>
+        <p className="muted">
+          Coming soon. When the website preorder checkout goes live, batch orders will land here
+          with customer details, pickup windows, and status tracking from confirmation to handoff.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="order-groups">
+      <button className="admin-card order-group-card" type="button" onClick={() => setGroup("pos")}>
+        <div className="order-group-head">
+          <CreditCard size={24} />
+          <h2>Mobile POS Sales</h2>
+          <span className="status-badge product-status-active">Live</span>
+        </div>
+        {pos.loading ? (
+          <p className="muted">Loading sales…</p>
+        ) : pos.error ? (
+          <p className="muted">Sales unavailable: {pos.error}</p>
+        ) : (
+          <div className="order-group-stats">
+            <div>
+              <span>Sales today</span>
+              <strong>{paidToday.length}</strong>
+            </div>
+            <div>
+              <span>Revenue today</span>
+              <strong>{formatMoney(revenueToday)}</strong>
+            </div>
+            <div>
+              <span>All time</span>
+              <strong>
+                {paid.length} · {formatMoney(revenueAllTime)}
+              </strong>
+            </div>
+            <div>
+              <span>Last sale</span>
+              <strong>{lastSale ? formatBusinessDateTime(lastSale.createdAtUtc) : "—"}</strong>
+            </div>
+          </div>
+        )}
+        <span className="order-group-cta">
+          View all POS sales
+          <ChevronRight size={18} />
+        </span>
+      </button>
+
+      <button className="admin-card order-group-card" type="button" onClick={() => setGroup("preorders")}>
+        <div className="order-group-head">
+          <CalendarDays size={24} />
+          <h2>Batch Pre-orders</h2>
+          <span className="status-badge product-status-sold_out">Coming soon</span>
+        </div>
+        <div className="order-group-stats">
+          <div>
+            <span>Open orders</span>
+            <strong>0</strong>
+          </div>
+          <div>
+            <span>Committed batches</span>
+            <strong>0</strong>
+          </div>
+        </div>
+        <p className="muted">
+          Website preorder checkout isn't live yet. Half-dozen and dozen batch orders will be
+          confirmed and tracked here.
+        </p>
+        <span className="order-group-cta">
+          Preview
+          <ChevronRight size={18} />
+        </span>
+      </button>
+    </section>
+  );
+}
+
+function PosOrdersDetail({ pos, onBack }: { pos: PosState; onBack: () => void }) {
+  const paid = pos.tickets.filter((ticket) => ticket.status === "paid");
+  const revenueAllTime = paid.reduce((sum, ticket) => sum + ticket.totalCents, 0);
+
   return (
     <section className="admin-card">
       <div className="toolbar">
-        <label className="search-box">
-          <Search size={18} />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search orders"
-          />
-        </label>
-        <button className="button button-ghost" type="button">
-          <Download size={18} />
-          Export
+        <button className="button button-small" type="button" onClick={onBack}>
+          <ArrowLeft size={16} />
+          All orders
         </button>
       </div>
-      <div className="order-admin-list">
-        {orders.map((order) => (
-          <article className="order-admin-card" key={order.id}>
-            <div>
-              <p className="eyebrow">{order.orderNumber}</p>
-              <h2>{order.customer.name}</h2>
-              <p>{order.customer.mobile} / {order.customer.preferredContact}</p>
+      <h2>Mobile POS Sales</h2>
+      {pos.loading ? (
+        <p className="muted">Loading sales…</p>
+      ) : pos.error ? (
+        <p className="muted">Sales unavailable: {pos.error}</p>
+      ) : paid.length === 0 ? (
+        <p className="muted">No POS sales yet. Ring one up in Live POS.</p>
+      ) : (
+        <>
+          <div className="admin-row">
+            <span>{paid.length} sales</span>
+            <strong>{formatMoney(revenueAllTime)}</strong>
+          </div>
+          {paid.map((ticket) => (
+            <div className="production-row" key={ticket.id}>
+              <span>{ticket.ticketNumber}</span>
+              <strong>{formatBusinessDateTime(ticket.createdAtUtc)}</strong>
+              <span>
+                {ticket.items.map((item) => `${item.quantity} ${item.productName}`).join(", ")}
+              </span>
+              <span>{paymentLabels[ticket.paymentMethod]}</span>
+              <strong>{formatMoney(ticket.totalCents)}</strong>
             </div>
-            <div>
-              <span className={`status-badge status-${order.status}`}>{statusLabels[order.status]}</span>
-              <strong>{formatMoney(order.totals.totalCents)}</strong>
-            </div>
-            <div className="order-items-mini">
-              {order.items.map((item) => (
-                <span key={item.variantId}>
-                  {item.quantity} x {item.productName} {item.variantLabel}
-                </span>
-              ))}
-            </div>
-            <div className="button-row">
-              {(["confirmed", "preparing", "ready", "completed", "canceled"] as OrderStatus[]).map(
-                (status) => (
-                  <button
-                    key={status}
-                    type="button"
-                    className="button button-small"
-                    disabled={!canTransitionOrder(order.status, status)}
-                    onClick={() => updateStatus(order.id, status)}
-                  >
-                    {statusLabels[status]}
-                  </button>
-                )
-              )}
-            </div>
-          </article>
-        ))}
-      </div>
+          ))}
+        </>
+      )}
     </section>
   );
+}
+
+const spiceLevels: SpiceLevel[] = ["mild", "medium", "hot"];
+const productStatuses: Record<ProductStatus, string> = {
+  active: "Active",
+  inactive: "Inactive",
+  sold_out: "Sold out"
+};
+
+const DEFAULT_PRODUCT_IMAGE = "/media/tamales_hero.webp";
+
+const batchVariantSpecs = [
+  { unitQuantity: 6, label: "Half dozen", field: "halfDozenPrice", idSuffix: "half-dozen" },
+  { unitQuantity: 12, label: "Dozen", field: "dozenPrice", idSuffix: "dozen" }
+] as const;
+
+function parsePriceCents(value: FormDataEntryValue | null): number {
+  const cents = Math.round(Number(value || "0") * 100);
+  return Number.isFinite(cents) && cents > 0 ? cents : 0;
+}
+
+function centsToInput(cents: number | undefined): string {
+  return cents && cents > 0 ? (cents / 100).toFixed(2) : "";
 }
 
 function MenuView({
@@ -510,45 +677,17 @@ function MenuView({
   products: MenuProduct[];
   setProducts: Dispatch<SetStateAction<MenuProduct[]>>;
 }) {
-  function addProduct(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const name = String(form.get("name") ?? "").trim();
-    const priceCents = Math.round(Number(form.get("price") ?? "0") * 100);
-    if (!name || priceCents <= 0) return;
-    const slug = slugify(name);
-    const id = `custom-${slug}-${Date.now()}`;
-    const product: MenuProduct = {
-      id,
-      name,
-      slug,
-      description: String(form.get("description") ?? "Single serving POS item."),
-      ingredients: String(form.get("ingredients") ?? "")
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean),
-      spiceLevel: "mild",
-      allergyNotice: "Ask staff for allergen details.",
-      imageUrl: "/media/tamales_hero.png",
-      status: "active",
-      bulkMenuEnabled: form.get("bulkMenuEnabled") === "on",
-      showWhenSoldOut: true,
-      sortOrder: products.length + 1,
-      variants: [
-        {
-          id: `${slug}-single`,
-          productId: id,
-          label: "Single serving",
-          unitQuantity: 1,
-          priceCents,
-          minimumQuantity: 1,
-          active: true,
-          sortOrder: 1
-        }
-      ]
-    };
-    setProducts((current) => [...current, product]);
-    event.currentTarget.reset();
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  function addProduct(product: MenuProduct) {
+    setProducts((current) => [...current, { ...product, sortOrder: current.length + 1 }]);
+    setAdding(false);
+  }
+
+  function saveProduct(updated: MenuProduct) {
+    setProducts((current) => current.map((product) => (product.id === updated.id ? updated : product)));
+    setEditingId(null);
   }
 
   function removeProduct(id: string) {
@@ -565,64 +704,278 @@ function MenuView({
 
   return (
     <section className="menu-manager">
-      <form className="admin-card menu-form" onSubmit={addProduct}>
-        <Plus size={24} />
-        <h2>Add Menu Item</h2>
-        <label>
-          Name
-          <input name="name" required />
-        </label>
-        <label>
-          Ingredients
-          <input name="ingredients" placeholder="masa, chile, pork" />
-        </label>
-        <label>
-          Price
-          <input name="price" type="number" min="0.01" step="0.01" inputMode="decimal" required />
-        </label>
-        <label>
-          Short description
-          <textarea name="description" rows={3} />
-        </label>
-        <label className="toggle-row">
-          <input name="bulkMenuEnabled" type="checkbox" defaultChecked />
-          <span>Add to bulk menu / website preorder menu</span>
-        </label>
-        <button className="button button-primary" type="submit">
-          Add Item
+      <div className="menu-toolbar">
+        <p className="muted">
+          {products.length} menu item{products.length === 1 ? "" : "s"}
+        </p>
+        <button
+          className={`button ${adding ? "button-ghost" : "button-primary"}`}
+          type="button"
+          onClick={() => {
+            setAdding((current) => !current);
+            setEditingId(null);
+          }}
+        >
+          <Plus size={18} />
+          {adding ? "Close" : "Add Menu Item"}
         </button>
-      </form>
+      </div>
 
-      <div className="admin-grid">
-        {products.map((product) => (
-          <article className="admin-card" key={product.id}>
-            <img className="admin-thumb" src={product.imageUrl} alt="" />
-            <h2>{product.name}</h2>
-            <p>{product.description}</p>
-            <div className="admin-row">
-              <span>Ingredients</span>
-              <strong>{product.ingredients.join(", ") || "Not set"}</strong>
-            </div>
-            <div className="admin-row">
-              <span>Single/POS price</span>
-              <strong>{formatMoney(product.variants[0]?.priceCents ?? 0)}</strong>
-            </div>
-            <label className="toggle-row menu-toggle">
-              <input
-                type="checkbox"
-                checked={product.bulkMenuEnabled}
-                onChange={() => toggleBulk(product.id)}
-              />
-              <span>Show on preorder menu</span>
-            </label>
-            <button className="button button-small" type="button" onClick={() => removeProduct(product.id)}>
-              <Trash2 size={16} />
-              Remove
-            </button>
-          </article>
-        ))}
+      {adding && <ProductForm onSave={addProduct} onCancel={() => setAdding(false)} />}
+
+      <div className="menu-grid">
+        {products.map((product) =>
+          editingId === product.id ? (
+            <ProductForm
+              key={product.id}
+              product={product}
+              onSave={saveProduct}
+              onCancel={() => setEditingId(null)}
+            />
+          ) : (
+            <MenuItemCard
+              key={product.id}
+              product={product}
+              onEdit={() => {
+                setEditingId(product.id);
+                setAdding(false);
+              }}
+              onRemove={() => removeProduct(product.id)}
+              onToggleBulk={() => toggleBulk(product.id)}
+            />
+          )
+        )}
       </div>
     </section>
+  );
+}
+
+function MenuItemCard({
+  product,
+  onEdit,
+  onRemove,
+  onToggleBulk
+}: {
+  product: MenuProduct;
+  onEdit: () => void;
+  onRemove: () => void;
+  onToggleBulk: () => void;
+}) {
+  return (
+    <article className="admin-card menu-item-card">
+      <div className="menu-item-photo-wrap">
+        <img className="menu-item-photo" src={product.imageUrl} alt={product.name} />
+        <span className={`status-badge product-status-${product.status}`}>
+          {productStatuses[product.status]}
+        </span>
+      </div>
+      <div className="menu-item-body">
+        <h3>{product.name}</h3>
+        {product.description && <p className="muted menu-item-description">{product.description}</p>}
+        <div className="price-chips">
+          {product.singlePriceCents > 0 && (
+            <span className="price-chip">
+              <span>Single</span>
+              <strong>{formatMoney(product.singlePriceCents)}</strong>
+            </span>
+          )}
+          {product.variants.map((variant) => (
+            <span className="price-chip" key={variant.id}>
+              <span>{variant.label}</span>
+              <strong>{formatMoney(variant.priceCents)}</strong>
+            </span>
+          ))}
+          {product.singlePriceCents <= 0 && product.variants.length === 0 && (
+            <span className="muted">No prices set</span>
+          )}
+        </div>
+        <label className="toggle-row">
+          <input type="checkbox" checked={product.bulkMenuEnabled} onChange={onToggleBulk} />
+          <span>Show on preorder menu</span>
+        </label>
+        <div className="button-row">
+          <button className="button button-small" type="button" onClick={onEdit}>
+            <Pencil size={16} />
+            Edit
+          </button>
+          <button className="button button-small" type="button" onClick={onRemove}>
+            <Trash2 size={16} />
+            Remove
+          </button>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function ProductForm({
+  product,
+  onSave,
+  onCancel
+}: {
+  product?: MenuProduct;
+  onSave: (product: MenuProduct) => void;
+  onCancel: () => void;
+}) {
+  const [image, setImage] = useState(product?.imageUrl ?? "");
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const name = String(form.get("name") ?? "").trim();
+    if (!name) return;
+    const slug = product?.slug ?? slugify(name);
+    const id = product?.id ?? `custom-${slug}-${Date.now()}`;
+    const variants: MenuVariant[] = batchVariantSpecs.flatMap((spec, index) => {
+      const priceCents = parsePriceCents(form.get(spec.field));
+      if (priceCents <= 0) return [];
+      const existing = product?.variants.find((variant) => variant.unitQuantity === spec.unitQuantity);
+      return [
+        {
+          id: existing?.id ?? `${slug}-${spec.idSuffix}`,
+          productId: id,
+          label: spec.label,
+          unitQuantity: spec.unitQuantity,
+          priceCents,
+          minimumQuantity: existing?.minimumQuantity ?? 1,
+          active: existing?.active ?? true,
+          sortOrder: index + 1
+        }
+      ];
+    });
+    onSave({
+      id,
+      name,
+      slug,
+      description: String(form.get("description") ?? "").trim(),
+      ingredients: String(form.get("ingredients") ?? "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+      spiceLevel: (form.get("spiceLevel") as SpiceLevel) || "mild",
+      allergyNotice: String(form.get("allergyNotice") ?? "").trim(),
+      imageUrl: image || DEFAULT_PRODUCT_IMAGE,
+      singlePriceCents: parsePriceCents(form.get("singlePrice")),
+      status: (form.get("status") as ProductStatus) || "active",
+      bulkMenuEnabled: form.get("bulkMenuEnabled") === "on",
+      showWhenSoldOut: form.get("showWhenSoldOut") === "on",
+      sortOrder: product?.sortOrder ?? 0,
+      variants
+    });
+  }
+
+  return (
+    <form className="admin-card product-form" onSubmit={handleSubmit}>
+      <h2>{product ? `Edit ${product.name}` : "Add Menu Item"}</h2>
+      <div className="product-form-body">
+        <ImagePicker value={image} onChange={setImage} />
+        <div className="form-grid product-fields">
+          <label className="full-span">
+            Name
+            <input name="name" defaultValue={product?.name ?? ""} required />
+          </label>
+          <div className="price-inputs full-span">
+            <label>
+              Single (Live POS)
+              <input
+                name="singlePrice"
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                placeholder="0.00"
+                defaultValue={centsToInput(product?.singlePriceCents)}
+              />
+            </label>
+            {batchVariantSpecs.map((spec) => (
+              <label key={spec.field}>
+                {spec.label}
+                <input
+                  name={spec.field}
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  defaultValue={centsToInput(
+                    product?.variants.find((variant) => variant.unitQuantity === spec.unitQuantity)
+                      ?.priceCents
+                  )}
+                />
+              </label>
+            ))}
+          </div>
+          <p className="muted price-hint full-span">
+            Single is what the Live POS charges per tamale. Half dozen and Dozen are the preorder
+            batch prices. Leave a price blank to turn that option off.
+          </p>
+          <label className="full-span">
+            Ingredients
+            <input
+              name="ingredients"
+              defaultValue={product?.ingredients.join(", ") ?? ""}
+              placeholder="masa, chile, pork"
+            />
+          </label>
+          <label className="full-span">
+            Short description
+            <textarea name="description" rows={3} defaultValue={product?.description ?? ""} />
+          </label>
+          <label>
+            Spice level
+            <select name="spiceLevel" defaultValue={product?.spiceLevel ?? "mild"}>
+              {spiceLevels.map((level) => (
+                <option key={level} value={level}>
+                  {level[0].toUpperCase() + level.slice(1)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Status
+            <select name="status" defaultValue={product?.status ?? "active"}>
+              {(Object.keys(productStatuses) as ProductStatus[]).map((status) => (
+                <option key={status} value={status}>
+                  {productStatuses[status]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="full-span">
+            Allergy notice
+            <textarea
+              name="allergyNotice"
+              rows={2}
+              defaultValue={product?.allergyNotice ?? "Ask staff for allergen details."}
+            />
+          </label>
+          <label className="toggle-row full-span">
+            <input
+              name="bulkMenuEnabled"
+              type="checkbox"
+              defaultChecked={product?.bulkMenuEnabled ?? true}
+            />
+            <span>Show on preorder menu</span>
+          </label>
+          <label className="toggle-row full-span">
+            <input
+              name="showWhenSoldOut"
+              type="checkbox"
+              defaultChecked={product?.showWhenSoldOut ?? true}
+            />
+            <span>Keep visible when sold out</span>
+          </label>
+          <div className="button-row full-span">
+            <button className="button button-primary" type="submit">
+              {product ? "Save Changes" : "Add Item"}
+            </button>
+            <button className="button button-ghost" type="button" onClick={onCancel}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </form>
   );
 }
 
@@ -681,12 +1034,22 @@ function ContactsView() {
             <strong>{contact.name}</strong>
             <span>{contact.contact} / {contact.productInterest} / {contact.approximateQuantity}</span>
           </div>
-          <small>{formatDenverDateTime(contact.createdAtUtc)}</small>
+          <small>{formatBusinessDateTime(contact.createdAtUtc)}</small>
         </article>
       ))}
     </section>
   );
 }
+
+const timezoneOptions = [
+  { value: "America/Denver", label: "Mountain — America/Denver" },
+  { value: "America/Phoenix", label: "Arizona — America/Phoenix" },
+  { value: "America/Chicago", label: "Central — America/Chicago" },
+  { value: "America/New_York", label: "Eastern — America/New_York" },
+  { value: "America/Los_Angeles", label: "Pacific — America/Los_Angeles" },
+  { value: "America/Anchorage", label: "Alaska — America/Anchorage" },
+  { value: "Pacific/Honolulu", label: "Hawaii — Pacific/Honolulu" }
+];
 
 function SettingsView({
   payments,
@@ -743,22 +1106,107 @@ function SettingsView({
         </button>
       </form>
       <article className="admin-card settings-list">
-        <CreditCard size={24} />
-        <h2>Business Settings</h2>
-        <div className="admin-row">
-          <span>Timezone</span>
-          <strong>{businessSettings.timezone}</strong>
-        </div>
-        <div className="admin-row">
-          <span>Tax rate</span>
-          <strong>{businessSettings.taxRateBps / 100}%</strong>
-        </div>
-        <div className="admin-row">
-          <span>Contact</span>
-          <strong>{businessSettings.contactPhone}</strong>
-        </div>
+        <KeyRound size={24} />
+        <h2>Account Security</h2>
+        <ChangePasswordForm />
       </article>
+      <BusinessSettingsCard />
     </section>
+  );
+}
+
+function BusinessSettingsCard() {
+  const business = useBusinessSettings();
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const taxPercent = Number(form.get("taxRate"));
+    setSaved(false);
+    setError("");
+    if (!Number.isFinite(taxPercent) || taxPercent < 0 || taxPercent > 25) {
+      setError("Enter the tax rate as a percentage between 0 and 25, e.g. 8.7.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await saveBusinessSettings({
+        timezone: String(form.get("timezone") ?? business.timezone),
+        taxRateBps: Math.round(taxPercent * 100),
+        contactPhone: String(form.get("contactPhone") ?? "").trim(),
+        contactEmail: String(form.get("contactEmail") ?? "").trim(),
+        instagramHandle: String(form.get("instagramHandle") ?? "").trim()
+      });
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save business settings.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form
+      className="admin-card settings-list"
+      // Remount the form when the stored settings arrive so the fields pick
+      // up the loaded values as their defaults.
+      key={`${business.timezone}|${business.taxRateBps}|${business.contactPhone}|${business.contactEmail}|${business.instagramHandle}`}
+      onSubmit={handleSubmit}
+    >
+      <CreditCard size={24} />
+      <h2>Business Settings</h2>
+      <label>
+        Timezone
+        <select name="timezone" defaultValue={business.timezone}>
+          {timezoneOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Tax rate (%)
+        <input
+          name="taxRate"
+          type="number"
+          min="0"
+          max="25"
+          step="0.01"
+          inputMode="decimal"
+          defaultValue={(business.taxRateBps / 100).toString()}
+          required
+        />
+      </label>
+      <label>
+        Contact phone
+        <input name="contactPhone" type="tel" defaultValue={business.contactPhone} />
+      </label>
+      <label>
+        Contact email
+        <input name="contactEmail" type="email" defaultValue={business.contactEmail} />
+      </label>
+      <label>
+        Instagram handle
+        <input name="instagramHandle" defaultValue={business.instagramHandle} placeholder="@banginbustostamales" />
+      </label>
+      {error && (
+        <p className="form-notice form-notice-error" role="alert">
+          {error}
+        </p>
+      )}
+      {saved && (
+        <p className="form-notice" role="status">
+          Business settings saved. The POS and website use them immediately.
+        </p>
+      )}
+      <button className="button button-primary" type="submit" disabled={saving}>
+        {saving ? "Saving…" : "Save Business Settings"}
+      </button>
+    </form>
   );
 }
 
@@ -770,14 +1218,14 @@ function ExportsView({ pos }: { pos: PosState }) {
     const header = ["Ticket", "Date (Denver)", "Payment", "Items", "Subtotal", "Tax", "Total"];
     const rows = paid.map((ticket) => [
       ticket.ticketNumber,
-      formatDenverDateTime(ticket.createdAtUtc),
+      formatBusinessDateTime(ticket.createdAtUtc),
       paymentLabels[ticket.paymentMethod],
       ticket.items.map((item) => `${item.quantity}x ${item.productName}`).join("; "),
       (ticket.subtotalCents / 100).toFixed(2),
       (ticket.taxCents / 100).toFixed(2),
       (ticket.totalCents / 100).toFixed(2)
     ]);
-    downloadCsv(`bbt-pos-sales-${denverTodayKey()}.csv`, [header, ...rows]);
+    downloadCsv(`bbt-pos-sales-${businessTodayKey()}.csv`, [header, ...rows]);
   }
 
   return (
@@ -810,7 +1258,7 @@ function ExportsView({ pos }: { pos: PosState }) {
           {paid.map((ticket) => (
             <div className="production-row" key={ticket.id}>
               <span>{ticket.ticketNumber}</span>
-              <strong>{formatDenverDateTime(ticket.createdAtUtc)}</strong>
+              <strong>{formatBusinessDateTime(ticket.createdAtUtc)}</strong>
               <span>{ticket.items.map((item) => `${item.quantity} ${item.productName}`).join(", ")}</span>
               <span>{paymentLabels[ticket.paymentMethod]}</span>
               <strong>{formatMoney(ticket.totalCents)}</strong>
