@@ -1,5 +1,5 @@
 import { ShoppingBasket } from "lucide-react";
-import { menuProducts } from "../data/fixtures";
+import { useMenuProducts } from "../lib/menuStore";
 import { calculateTotals, buildOrderLines } from "../lib/order";
 import { formatMoney } from "../lib/money";
 import type { CartSelection } from "../lib/types";
@@ -10,6 +10,7 @@ interface OrderSummaryProps {
 }
 
 export function OrderSummary({ selections, compact = false }: OrderSummaryProps) {
+  const menuProducts = useMenuProducts();
   const lines = buildOrderLines(selections, menuProducts);
   const totals = calculateTotals(lines);
 

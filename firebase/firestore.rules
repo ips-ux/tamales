@@ -30,6 +30,59 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // The menu. Publicly readable so the customer site renders it; only the
+    // owner edits it from the admin Menu page.
+    match /menuItems/{itemId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Accounting/reporting configuration (revenue share, tax filing info,
+    // balance sheet inputs). Owner-only.
+    match /settings/reporting {
+      allow read, write: if isAdmin();
+    }
+
+    // Global operating state (test mode). Owner-only.
+    match /settings/app {
+      allow read, write: if isAdmin();
+    }
+
+    // Stock levels and the adjustment audit log. Owner-only.
+    match /inventory/{productId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /inventoryAdjustments/{adjustmentId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Expense ledger backing the income statement. Owner-only.
+    match /expenses/{expenseId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Receipt emails + marketing opt-ins collected at POS checkout. Contains
+    // customer PII, so owner-only; the drawer runs on the signed-in POS device.
+    match /receiptContacts/{contactId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Self-service signups from the public /updates landing page. Anyone can
+    // create exactly one well-shaped signup document; only the owner can read
+    // the list, so the collection can't be harvested.
+    match /marketingSignups/{signupId} {
+      allow read, update, delete: if isAdmin();
+      allow create: if request.resource.data.keys().hasOnly(['email', 'source', 'createdAtUtc'])
+        && request.resource.data.email is string
+        && request.resource.data.email.size() >= 5
+        && request.resource.data.email.size() <= 200
+        && request.resource.data.email.matches('.+@.+\\..+')
+        && request.resource.data.source == 'landing'
+        && request.resource.data.createdAtUtc is string
+        && request.resource.data.createdAtUtc.size() <= 40;
+    }
+
     // Default deny for anything not matched above.
     match /{document=**} {
       allow read, write: if false;

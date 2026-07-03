@@ -5,13 +5,20 @@ import { OrderSummary } from "../components/OrderSummary";
 import { ProductCard } from "../components/ProductCard";
 import {
   availabilityWindows,
-  menuProducts,
   pickupLocations
 } from "../data/fixtures";
 import { useBusinessSettings } from "../lib/businessSettings";
+import { useMenuProducts } from "../lib/menuStore";
 import { createLocalOrderRecord, generateIdempotencyKey, orderItemCount } from "../lib/order";
 import { formatWindow, isWindowSelectable } from "../lib/time";
-import type { BulkOrderInfo, CartSelection, CustomerInfo, FulfillmentType, OrderRecord } from "../lib/types";
+import type {
+  BulkOrderInfo,
+  CartSelection,
+  CustomerInfo,
+  FulfillmentType,
+  MenuProduct,
+  OrderRecord
+} from "../lib/types";
 
 const steps = ["Fulfillment", "Time", "Products", "Contact", "Review"];
 
@@ -32,8 +39,11 @@ const emptyBulk: BulkOrderInfo = {
   additionalInstructions: ""
 };
 
-function quantityMapToSelections(quantities: Record<string, number>): CartSelection[] {
-  return menuProducts.flatMap((product) =>
+function quantityMapToSelections(
+  quantities: Record<string, number>,
+  products: MenuProduct[]
+): CartSelection[] {
+  return products.flatMap((product) =>
     product.variants.map((variant) => ({
       productId: product.id,
       variantId: variant.id,
@@ -44,6 +54,7 @@ function quantityMapToSelections(quantities: Record<string, number>): CartSelect
 
 export function OrderPage() {
   const businessSettings = useBusinessSettings();
+  const menuProducts = useMenuProducts();
   const [step, setStep] = useState(0);
   const [fulfillmentType, setFulfillmentType] = useState<FulfillmentType>("scheduled_pickup");
   const [windowId, setWindowId] = useState("sat-morning-westminster");
@@ -53,7 +64,10 @@ export function OrderPage() {
   const [errors, setErrors] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
-  const selections = useMemo(() => quantityMapToSelections(quantities), [quantities]);
+  const selections = useMemo(
+    () => quantityMapToSelections(quantities, menuProducts),
+    [quantities, menuProducts]
+  );
   const activeSelections = useMemo(
     () => selections.filter((selection) => selection.quantity > 0),
     [selections]
@@ -122,7 +136,7 @@ export function OrderPage() {
       if (!response.ok) throw new Error("Local API unavailable.");
       record = (await response.json()) as OrderRecord;
     } catch {
-      record = createLocalOrderRecord(draft);
+      record = createLocalOrderRecord(draft, menuProducts);
     }
     sessionStorage.setItem(`bbt-order-${record.publicToken}`, JSON.stringify(record));
     setSubmitting(false);

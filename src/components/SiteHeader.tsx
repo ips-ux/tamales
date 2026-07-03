@@ -27,7 +27,7 @@ const adminLinks: NavLink[] = [
   { href: "/admin/vendor", label: "Vendor", icon: ShieldCheck },
   { href: "/admin/contacts", label: "Contacts", icon: ShieldCheck },
   { href: "/admin/settings", label: "Settings", icon: ShieldCheck },
-  { href: "/admin/exports", label: "Exports", icon: ShieldCheck }
+  { href: "/admin/reports", label: "Reports", icon: ShieldCheck }
 ];
 
 export function SiteHeader({ isAdmin = false }: SiteHeaderProps) {

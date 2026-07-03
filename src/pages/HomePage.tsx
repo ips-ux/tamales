@@ -1,12 +1,14 @@
 import { ArrowRight, CalendarClock, MapPin, ShieldCheck } from "lucide-react";
 import { navigate } from "../App";
-import { availabilityWindows, menuProducts } from "../data/fixtures";
+import { availabilityWindows } from "../data/fixtures";
 import { useBusinessSettings } from "../lib/businessSettings";
+import { useMenuProducts } from "../lib/menuStore";
 import { formatMoney } from "../lib/money";
 import { formatWindow } from "../lib/time";
 
 export function HomePage() {
   const businessSettings = useBusinessSettings();
+  const menuProducts = useMenuProducts();
   return (
     <main>
       <section className="hero-section">

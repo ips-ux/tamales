@@ -8,6 +8,7 @@ import { HomePage } from "./pages/HomePage";
 import { LegalPage } from "./pages/LegalPage";
 import { LoginPage } from "./pages/LoginPage";
 import { OrderPage } from "./pages/OrderPage";
+import { UpdatesPage } from "./pages/UpdatesPage";
 import { VendorPage } from "./pages/VendorPage";
 
 function usePathname() {
@@ -45,6 +46,7 @@ export function App() {
   else if (confirmationToken) page = <ConfirmationPage publicToken={confirmationToken} />;
   else if (route === "/about") page = <AboutPage />;
   else if (route === "/login") page = <LoginPage />;
+  else if (route === "/updates") page = <UpdatesPage />;
   else if (route === "/privacy") page = <LegalPage kind="privacy" />;
   else if (route === "/terms") page = <LegalPage kind="terms" />;
   else if (isVendor && vendorToken) page = <VendorPage sessionToken={vendorToken} />;

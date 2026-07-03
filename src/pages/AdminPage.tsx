@@ -1,17 +1,19 @@
 import {
   ArrowLeft,
+  Ban,
   CalendarDays,
   ChevronRight,
   ClipboardCheck,
   CreditCard,
   Download,
-  FileText,
   FlaskConical,
   KeyRound,
+  Mail,
   Package,
   Pencil,
   Plus,
   QrCode,
+  RotateCcw,
   Settings,
   Trash2,
   Users,
@@ -31,14 +33,58 @@ import {
 } from "../data/fixtures";
 import { useBusinessSettings } from "../lib/businessSettings";
 import { downloadCsv } from "../lib/csv";
+import { receiptEmailConfigured, sendReceiptEmail } from "../lib/emailReceipt";
 import {
+  addExpense,
+  addReceiptContact,
+  adjustInventory,
+  deleteAllTestTickets,
+  deleteExpense,
+  deleteMenuItem,
+  deletePosTicket,
+  reportingDefaults,
   saveBusinessSettings,
+  saveMenuItem,
   savePosTicket,
+  saveReportingSettings,
+  saveTestMode,
+  seedMenuItemsIfEmpty,
+  setPosTicketStatus,
+  updatePosTicket,
+  watchAppState,
+  watchExpenses,
+  watchInventory,
+  watchInventoryAdjustments,
+  watchMarketingSignups,
   watchPosTickets,
+  watchReceiptContacts,
+  watchReportingSettings,
+  type ExpenseCategory,
+  type ExpenseRecord,
+  type FilingFrequency,
+  type InventoryAdjustmentReason,
+  type InventoryAdjustmentRecord,
+  type InventoryLevel,
+  type MarketingSignupRecord,
   type PosPaymentMethod,
-  type PosTicketRecord
+  type PosTicketRecord,
+  type ReceiptContactRecord,
+  type ReportingSettings
 } from "../lib/firestoreClient";
+import { useMenuProducts } from "../lib/menuStore";
 import { formatMoney } from "../lib/money";
+import {
+  buildBalanceSheet,
+  buildIncomeStatement,
+  buildSalesTaxReport,
+  expenseCategoryLabels,
+  expensesInPeriod,
+  getPeriods,
+  periodRangeLabel,
+  ticketsInPeriod,
+  type Period,
+  type PeriodId
+} from "../lib/reports";
 import { businessDateKey, businessTodayKey, formatBusinessDateTime, formatWindow } from "../lib/time";
 import type {
   MenuProduct,
@@ -78,7 +124,7 @@ function adminTitle(path: string) {
   if (path.includes("/vendor")) return "Vendor";
   if (path.includes("/contacts")) return "Contacts";
   if (path.includes("/settings")) return "Settings";
-  if (path.includes("/exports")) return "Exports";
+  if (path.includes("/reports") || path.includes("/exports")) return "Reports";
   return "Dashboard";
 }
 
@@ -125,14 +171,29 @@ function usePosTickets(): PosState {
   return { tickets, loading, error };
 }
 
-const TEST_MODE_KEY = "bbt-test-mode";
-
 export function AdminPage({ path }: AdminPageProps) {
-  const [products, setProducts] = useState<MenuProduct[]>(menuProducts);
+  // The live menu from Firestore (menuItems collection).
+  const products = useMenuProducts();
   const [payments, setPayments] = useState<PaymentSettings>(initialPaymentSettings);
-  const [testMode, setTestMode] = useState(() => localStorage.getItem(TEST_MODE_KEY) === "1");
+  // Global operating mode, shared by every admin device via settings/app.
+  const [testMode, setTestMode] = useState(false);
   const rawPos = usePosTickets();
   const title = adminTitle(path);
+
+  // First admin visit with an empty menu collection: copy the starter menu in
+  // so edits from then on persist to Firestore instead of reverting.
+  useEffect(() => {
+    seedMenuItemsIfEmpty(menuProducts).catch(() => undefined);
+  }, []);
+
+  useEffect(
+    () =>
+      watchAppState(
+        (state) => setTestMode(state.testMode),
+        () => undefined
+      ),
+    []
+  );
 
   // Every admin view sees only the current mode's tickets: real sales normally,
   // practice sales while test mode is on.
@@ -141,12 +202,26 @@ export function AdminPage({ path }: AdminPageProps) {
     tickets: rawPos.tickets.filter((ticket) => ticket.isTest === testMode)
   };
 
-  function toggleTestMode() {
-    setTestMode((current) => {
-      const next = !current;
-      localStorage.setItem(TEST_MODE_KEY, next ? "1" : "0");
-      return next;
-    });
+  const [clearingTests, setClearingTests] = useState(false);
+  const [clearTestsError, setClearTestsError] = useState("");
+
+  async function handleClearTestData() {
+    const count = pos.tickets.length;
+    const confirmed = window.confirm(
+      `Permanently delete ${count} test sale${count === 1 ? "" : "s"}? Real sales are not affected. This cannot be undone.`
+    );
+    if (!confirmed) return;
+    setClearTestsError("");
+    setClearingTests(true);
+    try {
+      await deleteAllTestTickets();
+    } catch (error) {
+      setClearTestsError(
+        error instanceof Error ? error.message : "Could not clear the test data."
+      );
+    } finally {
+      setClearingTests(false);
+    }
   }
 
   return (
@@ -154,28 +229,46 @@ export function AdminPage({ path }: AdminPageProps) {
       <section className="admin-heading">
         <p className="eyebrow">Owner Area</p>
         <h1>{title}</h1>
-        <label className="toggle-row test-mode-toggle">
-          <input type="checkbox" checked={testMode} onChange={toggleTestMode} />
-          <span>Test mode</span>
-        </label>
       </section>
 
       {testMode && (
         <div className="test-mode-banner" role="status">
           <FlaskConical size={20} />
-          Test mode — sales you take now are practice only and stay out of real reports.
+          <span>
+            Test mode is on for everyone — sales are practice only and stay out of real
+            reports. Switch back in Settings.
+            {clearTestsError && ` Could not clear: ${clearTestsError}`}
+          </span>
+          <button
+            className="button button-small"
+            type="button"
+            onClick={handleClearTestData}
+            disabled={clearingTests || pos.tickets.length === 0}
+          >
+            <Trash2 size={16} />
+            {clearingTests
+              ? "Clearing…"
+              : `Clear test data${pos.tickets.length > 0 ? ` (${pos.tickets.length})` : ""}`}
+          </button>
         </div>
       )}
 
       {title === "Dashboard" && <Dashboard pos={pos} products={products} />}
       {title === "Live POS" && <PosView products={products} payments={payments} testMode={testMode} />}
-      {title === "Orders" && <OrdersView pos={pos} />}
-      {title === "Menu" && <MenuView products={products} setProducts={setProducts} />}
+      {title === "Orders" && <OrdersView pos={pos} products={products} />}
+      {title === "Menu" && <MenuView products={products} />}
       {title === "Availability" && <AvailabilityView />}
       {title === "Vendor" && <VendorAdminView />}
       {title === "Contacts" && <ContactsView />}
-      {title === "Settings" && <SettingsView payments={payments} setPayments={setPayments} />}
-      {title === "Exports" && <ExportsView pos={pos} />}
+      {title === "Settings" && (
+        <SettingsView
+          payments={payments}
+          setPayments={setPayments}
+          products={products}
+          testMode={testMode}
+        />
+      )}
+      {title === "Reports" && <ReportsView pos={pos} />}
     </main>
   );
 }
@@ -268,6 +361,9 @@ function PosView({
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<PaidTicketSnapshot | null>(null);
+  const [priceEditId, setPriceEditId] = useState<string | null>(null);
+  const [priceDraft, setPriceDraft] = useState("");
   const activeProducts = products.filter(
     (product) => product.status === "active" && product.singlePriceCents > 0
   );
@@ -312,6 +408,20 @@ function PosView({
     setTicketOpen(false);
     setMethod("cash");
     setSaveError(null);
+    setPriceEditId(null);
+  }
+
+  // Per-line price override for comps and free replacements: the item still
+  // rings through (and pulls from inventory) at whatever price is set, $0 included.
+  function applyPriceOverride(productId: string) {
+    const cents = Math.round(Number(priceDraft) * 100);
+    if (!Number.isFinite(cents) || cents < 0) return;
+    setItems((current) =>
+      current.map((item) =>
+        item.productId === productId ? { ...item, unitPriceCents: cents } : item
+      )
+    );
+    setPriceEditId(null);
   }
 
   async function handleMarkPaid() {
@@ -319,12 +429,22 @@ function PosView({
     setSaving(true);
     setSaveError(null);
     try {
-      await savePosTicket({
+      const saved = await savePosTicket({
         items,
         subtotalCents,
         taxCents,
         totalCents,
         paymentMethod: method,
+        isTest: testMode
+      });
+      setReceipt({
+        ticketId: saved.id,
+        ticketNumber: saved.ticketNumber,
+        items,
+        subtotalCents,
+        taxCents,
+        totalCents,
+        method,
         isTest: testMode
       });
       clearTicket();
@@ -396,7 +516,40 @@ function PosView({
               <div className="pos-ticket-line" key={item.productId}>
                 <div>
                   <strong>{item.productName}</strong>
-                  <span>{formatMoney(item.unitPriceCents)} each</span>
+                  {priceEditId === item.productId ? (
+                    <span className="pos-price-edit">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        inputMode="decimal"
+                        value={priceDraft}
+                        aria-label={`New unit price for ${item.productName}`}
+                        onChange={(event) => setPriceDraft(event.target.value)}
+                      />
+                      <button
+                        className="button button-small"
+                        type="button"
+                        onClick={() => applyPriceOverride(item.productId)}
+                      >
+                        Set
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      className="pos-price-button"
+                      type="button"
+                      title="Tap to override the price (comp / replacement)"
+                      onClick={() => {
+                        setPriceEditId(item.productId);
+                        setPriceDraft((item.unitPriceCents / 100).toFixed(2));
+                      }}
+                    >
+                      {item.unitPriceCents === 0
+                        ? "FREE — comp"
+                        : `${formatMoney(item.unitPriceCents)} each`}
+                    </button>
+                  )}
                 </div>
                 <div className="pos-qty">
                   <button type="button" onClick={() => updateItem(item.productId, item.quantity - 1)}>
@@ -501,11 +654,160 @@ function PosView({
           Charge {formatMoney(totalCents)}
         </button>
       </div>
+
+      {receipt && (
+        <ReceiptDrawer
+          ticket={receipt}
+          businessName={business.name}
+          onClose={() => setReceipt(null)}
+        />
+      )}
     </section>
   );
 }
 
-function OrdersView({ pos }: { pos: PosState }) {
+interface PaidTicketSnapshot {
+  ticketId: string;
+  ticketNumber: string;
+  items: PosTicketItem[];
+  subtotalCents: number;
+  taxCents: number;
+  totalCents: number;
+  method: PaymentMethod;
+  isTest: boolean;
+}
+
+function ReceiptDrawer({
+  ticket,
+  businessName,
+  onClose
+}: {
+  ticket: PaidTicketSnapshot;
+  businessName: string;
+  onClose: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [sentTo, setSentTo] = useState("");
+  const [savedWithoutEmail, setSavedWithoutEmail] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const email = String(form.get("email") ?? "").trim();
+    const marketingOptIn = form.get("optIn") === "on";
+    if (!email) return;
+    setBusy(true);
+    setError("");
+    try {
+      await addReceiptContact({
+        email,
+        marketingOptIn,
+        ticketId: ticket.ticketId,
+        ticketNumber: ticket.ticketNumber,
+        totalCents: ticket.totalCents,
+        isTest: ticket.isTest
+      });
+      if (receiptEmailConfigured()) {
+        await sendReceiptEmail({
+          toEmail: email,
+          businessName,
+          ticketNumber: ticket.ticketNumber,
+          purchasedAt: formatBusinessDateTime(new Date().toISOString()),
+          items: ticket.items.map((item) => ({
+            name: item.productName,
+            quantity: item.quantity,
+            unitPrice: formatMoney(item.unitPriceCents),
+            lineTotal: formatMoney(item.quantity * item.unitPriceCents)
+          })),
+          subtotal: formatMoney(ticket.subtotalCents),
+          tax: formatMoney(ticket.taxCents),
+          total: formatMoney(ticket.totalCents),
+          paymentMethod: paymentLabels[ticket.method],
+          signupUrl: marketingOptIn
+            ? undefined
+            : `${window.location.origin}/updates?email=${encodeURIComponent(email)}`
+        });
+      } else {
+        setSavedWithoutEmail(true);
+      }
+      setSentTo(email);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not send the receipt.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        className="pos-backdrop receipt-backdrop"
+        type="button"
+        aria-label="Close receipt"
+        onClick={onClose}
+      />
+      <div className="receipt-drawer" role="dialog" aria-label="Email receipt">
+        {sentTo ? (
+          <>
+            <ClipboardCheck size={28} />
+            <h2>{savedWithoutEmail ? "Email saved" : "Receipt sent!"}</h2>
+            <p className="muted">
+              {savedWithoutEmail
+                ? `${sentTo} was added to the contact list. Email sending isn't configured yet, so no receipt email went out.`
+                : `Receipt emailed to ${sentTo}.`}
+            </p>
+            <button className="button button-primary" type="button" onClick={onClose}>
+              Done
+            </button>
+          </>
+        ) : (
+          <>
+            <h2>Receipt?</h2>
+            <p className="muted">
+              {formatMoney(ticket.totalCents)} · {ticket.ticketNumber}. Hand the device to the
+              customer to email their receipt.
+            </p>
+            <form className="settings-list" onSubmit={handleSubmit}>
+              <label>
+                Email address
+                <input
+                  name="email"
+                  type="email"
+                  inputMode="email"
+                  autoComplete="off"
+                  placeholder="you@example.com"
+                  autoFocus
+                  required
+                />
+              </label>
+              <label className="toggle-row">
+                <input name="optIn" type="checkbox" />
+                <span>Send me updates about the next pop-up and events</span>
+              </label>
+              {error && (
+                <p className="form-notice form-notice-error" role="alert">
+                  {error}
+                </p>
+              )}
+              <div className="button-row">
+                <button className="button button-primary" type="submit" disabled={busy}>
+                  <Mail size={18} />
+                  {busy ? "Sending…" : "Email My Receipt"}
+                </button>
+                <button className="button button-ghost" type="button" onClick={onClose}>
+                  No Thanks
+                </button>
+              </div>
+            </form>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+function OrdersView({ pos, products }: { pos: PosState; products: MenuProduct[] }) {
   const [group, setGroup] = useState<"overview" | "pos" | "preorders">("overview");
   const todayKey = businessTodayKey();
   const paid = pos.tickets.filter((ticket) => ticket.status === "paid");
@@ -515,7 +817,7 @@ function OrdersView({ pos }: { pos: PosState }) {
   const lastSale = paid[0];
 
   if (group === "pos") {
-    return <PosOrdersDetail pos={pos} onBack={() => setGroup("overview")} />;
+    return <PosOrdersDetail pos={pos} products={products} onBack={() => setGroup("overview")} />;
   }
 
   if (group === "preorders") {
@@ -605,9 +907,40 @@ function OrdersView({ pos }: { pos: PosState }) {
   );
 }
 
-function PosOrdersDetail({ pos, onBack }: { pos: PosState; onBack: () => void }) {
-  const paid = pos.tickets.filter((ticket) => ticket.status === "paid");
+function PosOrdersDetail({
+  pos,
+  products,
+  onBack
+}: {
+  pos: PosState;
+  products: MenuProduct[];
+  onBack: () => void;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState("");
+  const tickets = pos.tickets;
+  const paid = tickets.filter((ticket) => ticket.status === "paid");
+  const voidedCount = tickets.length - paid.length;
   const revenueAllTime = paid.reduce((sum, ticket) => sum + ticket.totalCents, 0);
+
+  async function run(action: () => Promise<void>) {
+    setActionError("");
+    try {
+      await action();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "The change could not be saved.");
+    }
+  }
+
+  function handleDelete(ticket: PosTicketRecord) {
+    const confirmed = window.confirm(
+      `Permanently delete ${ticket.ticketNumber} (${formatMoney(ticket.totalCents)})? ` +
+        "This removes it from all reports and cannot be undone. Voiding keeps a record instead."
+    );
+    if (!confirmed) return;
+    if (editingId === ticket.id) setEditingId(null);
+    void run(() => deletePosTicket(ticket));
+  }
 
   return (
     <section className="admin-card">
@@ -622,28 +955,277 @@ function PosOrdersDetail({ pos, onBack }: { pos: PosState; onBack: () => void })
         <p className="muted">Loading sales…</p>
       ) : pos.error ? (
         <p className="muted">Sales unavailable: {pos.error}</p>
-      ) : paid.length === 0 ? (
+      ) : tickets.length === 0 ? (
         <p className="muted">No POS sales yet. Ring one up in Live POS.</p>
       ) : (
         <>
           <div className="admin-row">
-            <span>{paid.length} sales</span>
+            <span>
+              {paid.length} sales{voidedCount > 0 ? ` · ${voidedCount} voided` : ""}
+            </span>
             <strong>{formatMoney(revenueAllTime)}</strong>
           </div>
-          {paid.map((ticket) => (
-            <div className="production-row" key={ticket.id}>
-              <span>{ticket.ticketNumber}</span>
-              <strong>{formatBusinessDateTime(ticket.createdAtUtc)}</strong>
-              <span>
-                {ticket.items.map((item) => `${item.quantity} ${item.productName}`).join(", ")}
-              </span>
-              <span>{paymentLabels[ticket.paymentMethod]}</span>
-              <strong>{formatMoney(ticket.totalCents)}</strong>
-            </div>
-          ))}
+          {actionError && (
+            <p className="form-notice form-notice-error" role="alert">
+              {actionError}
+            </p>
+          )}
+          {tickets.map((ticket) =>
+            editingId === ticket.id ? (
+              <TicketEditor
+                key={ticket.id}
+                ticket={ticket}
+                products={products}
+                onClose={() => setEditingId(null)}
+              />
+            ) : (
+              <article
+                className={`receipt-card${ticket.status === "void" ? " receipt-void" : ""}`}
+                key={ticket.id}
+              >
+                <div className="receipt-head">
+                  <div>
+                    <strong>{ticket.ticketNumber}</strong>
+                    <span className="muted">{formatBusinessDateTime(ticket.createdAtUtc)}</span>
+                  </div>
+                  <span className="price-chip">
+                    <span>{paymentLabels[ticket.paymentMethod]}</span>
+                  </span>
+                  {ticket.status === "void" && (
+                    <span className="status-badge product-status-inactive">Void</span>
+                  )}
+                </div>
+                <div className="receipt-lines">
+                  {ticket.items.map((item) => (
+                    <div className="receipt-line" key={`${ticket.id}-${item.productId}`}>
+                      <span>
+                        {item.quantity} × {item.productName}
+                      </span>
+                      <span className="muted">@ {formatMoney(item.unitPriceCents)}</span>
+                      <strong>{formatMoney(item.quantity * item.unitPriceCents)}</strong>
+                    </div>
+                  ))}
+                </div>
+                <div className="receipt-totals">
+                  <div>
+                    <span>Subtotal</span>
+                    <strong>{formatMoney(ticket.subtotalCents)}</strong>
+                  </div>
+                  <div>
+                    <span>Tax</span>
+                    <strong>{formatMoney(ticket.taxCents)}</strong>
+                  </div>
+                  <div className="receipt-grand">
+                    <span>Total</span>
+                    <strong>{formatMoney(ticket.totalCents)}</strong>
+                  </div>
+                </div>
+                <div className="button-row">
+                  {ticket.status === "paid" ? (
+                    <>
+                      <button
+                        className="button button-small"
+                        type="button"
+                        onClick={() => setEditingId(ticket.id)}
+                      >
+                        <Pencil size={16} />
+                        Edit
+                      </button>
+                      <button
+                        className="button button-small"
+                        type="button"
+                        onClick={() => void run(() => setPosTicketStatus(ticket, "void"))}
+                      >
+                        <Ban size={16} />
+                        Void
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="button button-small"
+                      type="button"
+                      onClick={() => void run(() => setPosTicketStatus(ticket, "paid"))}
+                    >
+                      <RotateCcw size={16} />
+                      Restore
+                    </button>
+                  )}
+                  <button
+                    className="button button-small"
+                    type="button"
+                    onClick={() => handleDelete(ticket)}
+                  >
+                    <Trash2 size={16} />
+                    Delete
+                  </button>
+                </div>
+              </article>
+            )
+          )}
         </>
       )}
     </section>
+  );
+}
+
+function TicketEditor({
+  ticket,
+  products,
+  onClose
+}: {
+  ticket: PosTicketRecord;
+  products: MenuProduct[];
+  onClose: () => void;
+}) {
+  const business = useBusinessSettings();
+  const [items, setItems] = useState<PosTicketItem[]>(() =>
+    ticket.items.map((item) => ({ ...item }))
+  );
+  const [method, setMethod] = useState<PaymentMethod>(ticket.paymentMethod);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const subtotalCents = items.reduce((sum, item) => sum + item.quantity * item.unitPriceCents, 0);
+  const taxCents = Math.round((subtotalCents * business.taxRateBps) / 10000);
+  const totalCents = subtotalCents + taxCents;
+  const addable = products.filter(
+    (product) =>
+      product.status === "active" &&
+      product.singlePriceCents > 0 &&
+      !items.some((item) => item.productId === product.id)
+  );
+
+  function updateQuantity(productId: string, quantity: number) {
+    setItems((current) =>
+      quantity <= 0
+        ? current.filter((item) => item.productId !== productId)
+        : current.map((item) => (item.productId === productId ? { ...item, quantity } : item))
+    );
+  }
+
+  function addItem(productId: string) {
+    const product = products.find((item) => item.id === productId);
+    if (!product) return;
+    setItems((current) => [
+      ...current,
+      {
+        productId: product.id,
+        productName: product.name,
+        quantity: 1,
+        unitPriceCents: product.singlePriceCents
+      }
+    ]);
+  }
+
+  async function handleSave() {
+    if (items.length === 0) {
+      setError("A ticket needs at least one item — use Void or Delete to remove the whole sale.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await updatePosTicket(ticket, {
+        items,
+        subtotalCents,
+        taxCents,
+        totalCents,
+        paymentMethod: method
+      });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save the changes.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <article className="receipt-card">
+      <div className="receipt-head">
+        <div>
+          <strong>Editing {ticket.ticketNumber}</strong>
+          <span className="muted">{formatBusinessDateTime(ticket.createdAtUtc)}</span>
+        </div>
+      </div>
+      <div className="receipt-lines">
+        {items.map((item) => (
+          <div className="ticket-edit-line" key={item.productId}>
+            <div>
+              <strong>{item.productName}</strong>
+              <span className="muted"> @ {formatMoney(item.unitPriceCents)}</span>
+            </div>
+            <div className="pos-qty">
+              <button type="button" onClick={() => updateQuantity(item.productId, item.quantity - 1)}>
+                -
+              </button>
+              <output>{item.quantity}</output>
+              <button type="button" onClick={() => updateQuantity(item.productId, item.quantity + 1)}>
+                +
+              </button>
+            </div>
+            <strong>{formatMoney(item.quantity * item.unitPriceCents)}</strong>
+          </div>
+        ))}
+      </div>
+      {addable.length > 0 && (
+        <label className="ticket-edit-add">
+          Add item
+          <select
+            value=""
+            onChange={(event) => {
+              if (event.target.value) addItem(event.target.value);
+            }}
+          >
+            <option value="">Choose an item…</option>
+            {addable.map((product) => (
+              <option key={product.id} value={product.id}>
+                {product.name} ({formatMoney(product.singlePriceCents)})
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <label className="ticket-edit-add">
+        Payment method
+        <select
+          value={method}
+          onChange={(event) => setMethod(event.target.value as PaymentMethod)}
+        >
+          {(Object.keys(paymentLabels) as PaymentMethod[]).map((key) => (
+            <option key={key} value={key}>
+              {paymentLabels[key]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="receipt-totals">
+        <div>
+          <span>Subtotal</span>
+          <strong>{formatMoney(subtotalCents)}</strong>
+        </div>
+        <div>
+          <span>Tax (recalculated at {business.taxRateBps / 100}%)</span>
+          <strong>{formatMoney(taxCents)}</strong>
+        </div>
+        <div className="receipt-grand">
+          <span>Total</span>
+          <strong>{formatMoney(totalCents)}</strong>
+        </div>
+      </div>
+      {error && (
+        <p className="form-notice form-notice-error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="button-row">
+        <button className="button button-primary" type="button" onClick={handleSave} disabled={busy}>
+          {busy ? "Saving…" : "Save Changes"}
+        </button>
+        <button className="button button-ghost" type="button" onClick={onClose}>
+          Cancel
+        </button>
+      </div>
+    </article>
   );
 }
 
@@ -670,35 +1252,41 @@ function centsToInput(cents: number | undefined): string {
   return cents && cents > 0 ? (cents / 100).toFixed(2) : "";
 }
 
-function MenuView({
-  products,
-  setProducts
-}: {
-  products: MenuProduct[];
-  setProducts: Dispatch<SetStateAction<MenuProduct[]>>;
-}) {
+function MenuView({ products }: { products: MenuProduct[] }) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [menuError, setMenuError] = useState("");
+
+  // All menu mutations write straight to Firestore; the live snapshot updates
+  // this page (and the POS + customer site) when the write lands.
+  async function persist(action: () => Promise<void>) {
+    setMenuError("");
+    try {
+      await action();
+    } catch (error) {
+      setMenuError(error instanceof Error ? error.message : "Could not save the menu change.");
+    }
+  }
 
   function addProduct(product: MenuProduct) {
-    setProducts((current) => [...current, { ...product, sortOrder: current.length + 1 }]);
+    const maxSort = products.reduce((max, item) => Math.max(max, item.sortOrder), 0);
+    void persist(() => saveMenuItem({ ...product, sortOrder: maxSort + 1 }));
     setAdding(false);
   }
 
   function saveProduct(updated: MenuProduct) {
-    setProducts((current) => current.map((product) => (product.id === updated.id ? updated : product)));
+    void persist(() => saveMenuItem(updated));
     setEditingId(null);
   }
 
-  function removeProduct(id: string) {
-    setProducts((current) => current.filter((product) => product.id !== id));
+  function removeProduct(product: MenuProduct) {
+    if (!window.confirm(`Remove ${product.name} from the menu? This is permanent.`)) return;
+    void persist(() => deleteMenuItem(product.id));
   }
 
-  function toggleBulk(id: string) {
-    setProducts((current) =>
-      current.map((product) =>
-        product.id === id ? { ...product, bulkMenuEnabled: !product.bulkMenuEnabled } : product
-      )
+  function toggleBulk(product: MenuProduct) {
+    void persist(() =>
+      saveMenuItem({ ...product, bulkMenuEnabled: !product.bulkMenuEnabled })
     );
   }
 
@@ -721,6 +1309,12 @@ function MenuView({
         </button>
       </div>
 
+      {menuError && (
+        <p className="form-notice form-notice-error" role="alert">
+          {menuError}
+        </p>
+      )}
+
       {adding && <ProductForm onSave={addProduct} onCancel={() => setAdding(false)} />}
 
       <div className="menu-grid">
@@ -740,8 +1334,8 @@ function MenuView({
                 setEditingId(product.id);
                 setAdding(false);
               }}
-              onRemove={() => removeProduct(product.id)}
-              onToggleBulk={() => toggleBulk(product.id)}
+              onRemove={() => removeProduct(product)}
+              onToggleBulk={() => toggleBulk(product)}
             />
           )
         )}
@@ -1024,19 +1618,146 @@ function VendorAdminView() {
   );
 }
 
+function useReceiptContacts() {
+  const [contacts, setContacts] = useState<ReceiptContactRecord[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(
+    () =>
+      watchReceiptContacts(
+        (data) => {
+          setContacts(data);
+          setError(null);
+        },
+        (err) => setError(err.message)
+      ),
+    []
+  );
+  return { contacts, error };
+}
+
+function useMarketingSignups() {
+  const [signups, setSignups] = useState<MarketingSignupRecord[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(
+    () =>
+      watchMarketingSignups(
+        (data) => {
+          setSignups(data);
+          setError(null);
+        },
+        (err) => setError(err.message)
+      ),
+    []
+  );
+  return { signups, error };
+}
+
+interface MarketingContactRow {
+  id: string;
+  email: string;
+  optedIn: boolean;
+  source: "POS receipt" | "Landing page";
+  reference: string;
+  isTest: boolean;
+  createdAtUtc: string;
+}
+
 function ContactsView() {
+  const { contacts, error: contactsError } = useReceiptContacts();
+  const { signups, error: signupsError } = useMarketingSignups();
+  const error = contactsError ?? signupsError;
+
+  const marketing: MarketingContactRow[] = [
+    ...contacts.map((contact) => ({
+      id: `receipt-${contact.id}`,
+      email: contact.email,
+      optedIn: contact.marketingOptIn,
+      source: "POS receipt" as const,
+      reference: contact.ticketNumber,
+      isTest: contact.isTest,
+      createdAtUtc: contact.createdAtUtc
+    })),
+    ...signups.map((signup) => ({
+      id: `signup-${signup.id}`,
+      email: signup.email,
+      optedIn: true,
+      source: "Landing page" as const,
+      reference: "",
+      isTest: false,
+      createdAtUtc: signup.createdAtUtc
+    }))
+  ].sort((a, b) => (a.createdAtUtc < b.createdAtUtc ? 1 : -1));
+  const optedIn = marketing.filter((row) => row.optedIn);
+
+  function exportMarketingCsv() {
+    const header = ["Email", "Opted in", "Source", "Reference", "Collected"];
+    const rows = marketing.map((row) => [
+      row.email,
+      row.optedIn ? "yes" : "no",
+      row.source,
+      row.reference + (row.isTest ? " (test)" : ""),
+      formatBusinessDateTime(row.createdAtUtc)
+    ]);
+    downloadCsv(`bbt-marketing-contacts-${businessTodayKey()}.csv`, [header, ...rows]);
+  }
+
   return (
-    <section className="admin-card">
-      {contactSubmissions.map((contact) => (
-        <article className="contact-row" key={contact.id}>
-          <Users size={21} />
-          <div>
-            <strong>{contact.name}</strong>
-            <span>{contact.contact} / {contact.productInterest} / {contact.approximateQuantity}</span>
-          </div>
-          <small>{formatBusinessDateTime(contact.createdAtUtc)}</small>
-        </article>
-      ))}
+    <section className="menu-manager">
+      <article className="admin-card">
+        <div className="toolbar">
+          <h2>Marketing Contacts</h2>
+          <button
+            className="button button-ghost"
+            type="button"
+            onClick={exportMarketingCsv}
+            disabled={marketing.length === 0}
+          >
+            <Download size={18} />
+            Export CSV
+          </button>
+        </div>
+        <div className="admin-row">
+          <span>{marketing.length} collected</span>
+          <strong>{optedIn.length} opted into updates</strong>
+        </div>
+        {error && <p className="muted">Contacts unavailable: {error}</p>}
+        {!error && marketing.length === 0 && (
+          <p className="muted">
+            Emails from the POS receipt drawer and the /updates signup page will appear here.
+          </p>
+        )}
+        {marketing.map((row) => (
+          <article className="contact-row" key={row.id}>
+            <Mail size={21} />
+            <div>
+              <strong>{row.email}</strong>
+              <span>
+                {row.optedIn ? "Opted into updates" : "Receipt only"} · {row.source}
+                {row.reference ? ` · ${row.reference}` : ""}
+                {row.isTest ? " · TEST" : ""}
+              </span>
+            </div>
+            <small>{formatBusinessDateTime(row.createdAtUtc)}</small>
+          </article>
+        ))}
+      </article>
+
+      <article className="admin-card">
+        <h2>Business &amp; Bulk Inquiries</h2>
+        <p className="muted">
+          Catering, events, wholesale, and waitlist requests from the website and vendor pages.
+        </p>
+        {contactSubmissions.map((contact) => (
+          <article className="contact-row" key={contact.id}>
+            <Users size={21} />
+            <div>
+              <strong>{contact.name}</strong>
+              <span>{contact.contact} / {contact.productInterest} / {contact.approximateQuantity}</span>
+            </div>
+            <small>{formatBusinessDateTime(contact.createdAtUtc)}</small>
+          </article>
+        ))}
+      </article>
     </section>
   );
 }
@@ -1051,7 +1772,119 @@ const timezoneOptions = [
   { value: "Pacific/Honolulu", label: "Hawaii — Pacific/Honolulu" }
 ];
 
+type SettingsTab = "account" | "business" | "inventory" | "payments" | "reports";
+
+const settingsTabs: { id: SettingsTab; label: string }[] = [
+  { id: "account", label: "Account" },
+  { id: "business", label: "Business" },
+  { id: "inventory", label: "Inventory" },
+  { id: "payments", label: "Payments" },
+  { id: "reports", label: "Reports" }
+];
+
 function SettingsView({
+  payments,
+  setPayments,
+  products,
+  testMode
+}: {
+  payments: PaymentSettings;
+  setPayments: Dispatch<SetStateAction<PaymentSettings>>;
+  products: MenuProduct[];
+  testMode: boolean;
+}) {
+  const [tab, setTab] = useState<SettingsTab>("account");
+
+  return (
+    <section className="reports-shell">
+      <div className="report-tabs" role="tablist">
+        {settingsTabs.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={`button button-small report-tab${tab === item.id ? " active" : ""}`}
+            aria-pressed={tab === item.id}
+            onClick={() => setTab(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "account" && (
+        <article className="admin-card settings-list settings-panel">
+          <KeyRound size={24} />
+          <h2>Account Security</h2>
+          <ChangePasswordForm />
+        </article>
+      )}
+      {tab === "business" && (
+        <div className="settings-layout">
+          <BusinessSettingsCard />
+          <OperatingModeCard testMode={testMode} />
+        </div>
+      )}
+      {tab === "inventory" && <InventorySettings products={products} />}
+      {tab === "payments" && <PaymentSettingsCard payments={payments} setPayments={setPayments} />}
+      {tab === "reports" && <ReportSettingsTab />}
+    </section>
+  );
+}
+
+function OperatingModeCard({ testMode }: { testMode: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function setMode(next: boolean) {
+    if (next === testMode || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await saveTestMode(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not change the operating mode.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <article className="admin-card settings-list">
+      <FlaskConical size={24} />
+      <h2>Operating Mode</h2>
+      <p className="muted">
+        One global switch for every signed-in device — the whole site is either live or in test
+        mode. Test-mode sales are flagged as practice: they stay out of real orders, reports, and
+        inventory, and can be wiped from the test banner.
+      </p>
+      <div className="button-row">
+        <button
+          className={`button ${!testMode ? "button-primary" : "button-ghost"}`}
+          type="button"
+          disabled={busy}
+          onClick={() => setMode(false)}
+        >
+          {testMode ? "Switch to Live Mode" : "Live Mode (current)"}
+        </button>
+        <button
+          className={`button ${testMode ? "button-primary" : "button-ghost"}`}
+          type="button"
+          disabled={busy}
+          onClick={() => setMode(true)}
+        >
+          {testMode ? "Test Mode (current)" : "Switch to Test Mode"}
+        </button>
+      </div>
+      {error && (
+        <p className="form-notice form-notice-error" role="alert">
+          {error}
+        </p>
+      )}
+    </article>
+  );
+}
+
+function PaymentSettingsCard({
   payments,
   setPayments
 }: {
@@ -1073,45 +1906,225 @@ function SettingsView({
   }
 
   return (
-    <section className="settings-layout">
-      <form className="admin-card settings-list" onSubmit={saveSettings}>
-        <Settings size={24} />
-        <h2>Payment Accounts</h2>
-        <label>
-          Cash App cashtag
-          <input name="cashAppCashtag" defaultValue={payments.cashAppCashtag} />
-        </label>
-        <label>
-          PayPal.Me name
-          <input name="paypalMe" defaultValue={payments.paypalMe} />
-        </label>
-        <label>
-          Venmo handle
-          <input name="venmoHandle" defaultValue={payments.venmoHandle} />
-        </label>
-        <label>
-          Zelle email or phone
-          <input name="zelleContact" defaultValue={payments.zelleContact} />
-        </label>
-        <label>
-          Apple Pay note
-          <input name="applePayNote" defaultValue={payments.applePayNote} />
-        </label>
-        <label className="toggle-row">
-          <input name="applePayEnabled" type="checkbox" defaultChecked={payments.applePayEnabled} />
-          <span>Enable Apple Pay once merchant processing is ready</span>
-        </label>
-        <button className="button button-primary" type="submit">
-          Save Payment Settings
-        </button>
-      </form>
+    <form className="admin-card settings-list settings-panel" onSubmit={saveSettings}>
+      <Settings size={24} />
+      <h2>Payment Accounts</h2>
+      <label>
+        Cash App cashtag
+        <input name="cashAppCashtag" defaultValue={payments.cashAppCashtag} />
+      </label>
+      <label>
+        PayPal.Me name
+        <input name="paypalMe" defaultValue={payments.paypalMe} />
+      </label>
+      <label>
+        Venmo handle
+        <input name="venmoHandle" defaultValue={payments.venmoHandle} />
+      </label>
+      <label>
+        Zelle email or phone
+        <input name="zelleContact" defaultValue={payments.zelleContact} />
+      </label>
+      <label>
+        Apple Pay note
+        <input name="applePayNote" defaultValue={payments.applePayNote} />
+      </label>
+      <label className="toggle-row">
+        <input name="applePayEnabled" type="checkbox" defaultChecked={payments.applePayEnabled} />
+        <span>Enable Apple Pay once merchant processing is ready</span>
+      </label>
+      <button className="button button-primary" type="submit">
+        Save Payment Settings
+      </button>
+    </form>
+  );
+}
+
+function ReportSettingsTab() {
+  const reporting = useReportingSettings();
+  return <ReportSettingsCard reporting={reporting} />;
+}
+
+const adjustmentReasonLabels: Record<InventoryAdjustmentReason, string> = {
+  restock: "Restock / production",
+  loss: "Loss / waste",
+  comp: "Comp / replacement",
+  correction: "Count correction"
+};
+
+function useInventory() {
+  const [levels, setLevels] = useState<InventoryLevel[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(
+    () =>
+      watchInventory(
+        (data) => {
+          setLevels(data);
+          setError(null);
+        },
+        (err) => setError(err.message)
+      ),
+    []
+  );
+  return { levels, error };
+}
+
+function useInventoryAdjustments() {
+  const [adjustments, setAdjustments] = useState<InventoryAdjustmentRecord[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(
+    () =>
+      watchInventoryAdjustments(
+        (data) => {
+          setAdjustments(data);
+          setError(null);
+        },
+        (err) => setError(err.message)
+      ),
+    []
+  );
+  return { adjustments, error };
+}
+
+function InventorySettings({ products }: { products: MenuProduct[] }) {
+  const { levels, error: levelsError } = useInventory();
+  const { adjustments, error: adjustmentsError } = useInventoryAdjustments();
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  const levelByProduct = new Map(levels.map((level) => [level.productId, level]));
+  const rows = [
+    ...products.map((product) => ({
+      productId: product.id,
+      name: product.name,
+      stock: levelByProduct.get(product.id)?.stockCount ?? 0
+    })),
+    ...levels
+      .filter((level) => !products.some((product) => product.id === level.productId))
+      .map((level) => ({
+        productId: level.productId,
+        name: `${level.productName} (off menu)`,
+        stock: level.stockCount
+      }))
+  ];
+
+  async function handleAdjust(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const productId = String(form.get("productId") ?? "");
+    const product = products.find((item) => item.id === productId);
+    const quantity = Math.round(Number(form.get("quantity")));
+    const direction = String(form.get("direction") ?? "add");
+    if (!product || !Number.isFinite(quantity) || quantity <= 0) {
+      setFormError("Pick an item and a positive whole quantity.");
+      return;
+    }
+    setBusy(true);
+    setFormError("");
+    try {
+      await adjustInventory({
+        productId,
+        productName: product.name,
+        delta: direction === "add" ? quantity : -quantity,
+        reason: (form.get("reason") as InventoryAdjustmentReason) || "correction",
+        note: String(form.get("note") ?? "").trim()
+      });
+      formElement.reset();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Could not save the adjustment.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="settings-layout">
       <article className="admin-card settings-list">
-        <KeyRound size={24} />
-        <h2>Account Security</h2>
-        <ChangePasswordForm />
+        <Package size={24} />
+        <h2>Stock Levels</h2>
+        <p className="muted">
+          POS sales pull from stock automatically; voiding or deleting a ticket puts its items
+          back. Test-mode sales never touch stock.
+        </p>
+        {levelsError && <p className="muted">Stock unavailable: {levelsError}</p>}
+        {rows.map((row) => (
+          <div className="admin-row" key={row.productId}>
+            <span>{row.name}</span>
+            <strong className={row.stock <= 0 ? "stock-out" : ""}>{row.stock} in stock</strong>
+          </div>
+        ))}
       </article>
-      <BusinessSettingsCard />
-    </section>
+
+      <article className="admin-card settings-list">
+        <h2>Adjust Stock</h2>
+        <form className="settings-list" onSubmit={handleAdjust}>
+          <label>
+            Item
+            <select name="productId" required defaultValue="">
+              <option value="" disabled>
+                Choose an item…
+              </option>
+              {products.map((product) => (
+                <option key={product.id} value={product.id}>
+                  {product.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Action
+            <select name="direction" defaultValue="add">
+              <option value="add">Add to stock</option>
+              <option value="remove">Remove from stock</option>
+            </select>
+          </label>
+          <label>
+            Quantity
+            <input name="quantity" type="number" min="1" step="1" inputMode="numeric" required />
+          </label>
+          <label>
+            Reason
+            <select name="reason" defaultValue="restock">
+              {(Object.keys(adjustmentReasonLabels) as InventoryAdjustmentReason[]).map(
+                (reason) => (
+                  <option key={reason} value={reason}>
+                    {adjustmentReasonLabels[reason]}
+                  </option>
+                )
+              )}
+            </select>
+          </label>
+          <label>
+            Note
+            <input name="note" placeholder="e.g. Saturday batch, dropped tray, replaced order" />
+          </label>
+          {formError && (
+            <p className="form-notice form-notice-error" role="alert">
+              {formError}
+            </p>
+          )}
+          <button className="button button-primary" type="submit" disabled={busy}>
+            {busy ? "Saving…" : "Apply Adjustment"}
+          </button>
+        </form>
+        <h3 className="report-subhead">Recent adjustments</h3>
+        {adjustmentsError && <p className="muted">History unavailable: {adjustmentsError}</p>}
+        {adjustments.length === 0 ? (
+          <p className="muted">No manual adjustments yet.</p>
+        ) : (
+          adjustments.map((adjustment) => (
+            <div className="admin-row" key={adjustment.id}>
+              <span>
+                {adjustment.productName} · {adjustmentReasonLabels[adjustment.reason]}
+                {adjustment.note ? ` — ${adjustment.note}` : ""}
+              </span>
+              <strong>{adjustment.delta > 0 ? `+${adjustment.delta}` : adjustment.delta}</strong>
+            </div>
+          ))
+        )}
+      </article>
+    </div>
   );
 }
 
@@ -1210,62 +2223,673 @@ function BusinessSettingsCard() {
   );
 }
 
-function ExportsView({ pos }: { pos: PosState }) {
-  const paid = pos.tickets.filter((ticket) => ticket.status === "paid");
-  const totalCents = paid.reduce((sum, ticket) => sum + ticket.totalCents, 0);
+function useReportingSettings(): ReportingSettings {
+  const [settings, setSettings] = useState<ReportingSettings>(reportingDefaults);
+  useEffect(() => watchReportingSettings(setSettings, () => undefined), []);
+  return settings;
+}
 
-  function exportCsv() {
-    const header = ["Ticket", "Date (Denver)", "Payment", "Items", "Subtotal", "Tax", "Total"];
-    const rows = paid.map((ticket) => [
+function useExpenses() {
+  const [expenses, setExpenses] = useState<ExpenseRecord[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(
+    () =>
+      watchExpenses(
+        (data) => {
+          setExpenses(data);
+          setError(null);
+        },
+        (err) => setError(err.message)
+      ),
+    []
+  );
+  return { expenses, error };
+}
+
+const dollars = (cents: number) => (cents / 100).toFixed(2);
+
+function ReportLine({
+  label,
+  cents,
+  indent = false,
+  total = false,
+  negative = false
+}: {
+  label: string;
+  cents: number;
+  indent?: boolean;
+  total?: boolean;
+  negative?: boolean;
+}) {
+  return (
+    <div className={`report-line${indent ? " indent" : ""}${total ? " total" : ""}`}>
+      <span>{label}</span>
+      <strong>{negative ? `(${formatMoney(cents)})` : formatMoney(cents)}</strong>
+    </div>
+  );
+}
+
+type ReportTab = "income" | "balance" | "tax" | "expenses";
+
+const reportTabs: { id: ReportTab; label: string }[] = [
+  { id: "income", label: "Income Statement" },
+  { id: "balance", label: "Balance Sheet" },
+  { id: "tax", label: "Sales & Use Tax" },
+  { id: "expenses", label: "Expenses" }
+];
+
+function ReportsView({ pos }: { pos: PosState }) {
+  const business = useBusinessSettings();
+  const reporting = useReportingSettings();
+  const { expenses, error: expensesError } = useExpenses();
+  const [tab, setTab] = useState<ReportTab>("income");
+  const [periodId, setPeriodId] = useState<PeriodId>("this_month");
+
+  const periods = getPeriods();
+  const period = periods.find((item) => item.id === periodId) ?? periods[periods.length - 1];
+  const paid = pos.tickets.filter((ticket) => ticket.status === "paid");
+  const periodTickets = ticketsInPeriod(paid, period);
+  const periodExpenses = expensesInPeriod(expenses, period);
+  const usesPeriod = tab === "income" || tab === "tax" || tab === "expenses";
+
+  function exportRawSalesCsv() {
+    const header = ["Ticket", "Date", "Payment", "Items", "Net Sale", "Tax", "Total"];
+    const rows = periodTickets.map((ticket) => [
       ticket.ticketNumber,
       formatBusinessDateTime(ticket.createdAtUtc),
       paymentLabels[ticket.paymentMethod],
       ticket.items.map((item) => `${item.quantity}x ${item.productName}`).join("; "),
-      (ticket.subtotalCents / 100).toFixed(2),
-      (ticket.taxCents / 100).toFixed(2),
-      (ticket.totalCents / 100).toFixed(2)
+      dollars(ticket.subtotalCents),
+      dollars(ticket.taxCents),
+      dollars(ticket.totalCents)
     ]);
-    downloadCsv(`bbt-pos-sales-${businessTodayKey()}.csv`, [header, ...rows]);
+    downloadCsv(`bbt-sales-${period.id}-${businessTodayKey()}.csv`, [header, ...rows]);
   }
 
   return (
-    <section className="admin-card">
-      <FileText size={24} />
-      <div className="toolbar">
-        <h2>POS Sales Report</h2>
-        <button
-          className="button button-primary"
-          type="button"
-          onClick={exportCsv}
-          disabled={paid.length === 0}
-        >
-          <Download size={18} />
-          Export CSV
+    <section className="reports-shell">
+      <div className="report-tabs" role="tablist">
+        {reportTabs.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={`button button-small report-tab${tab === item.id ? " active" : ""}`}
+            aria-pressed={tab === item.id}
+            onClick={() => setTab(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      {usesPeriod && (
+        <div className="report-toolbar">
+          <label className="report-period">
+            Period
+            <select value={periodId} onChange={(event) => setPeriodId(event.target.value as PeriodId)}>
+              {periods.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="button button-ghost"
+            type="button"
+            onClick={exportRawSalesCsv}
+            disabled={periodTickets.length === 0}
+          >
+            <Download size={18} />
+            Raw sales CSV
+          </button>
+        </div>
+      )}
+
+      {pos.error && <p className="muted">Sales unavailable: {pos.error}</p>}
+      {expensesError && tab !== "balance" && (
+        <p className="muted">Expenses unavailable: {expensesError}</p>
+      )}
+
+      {tab === "income" && (
+        <IncomeStatementCard
+          businessName={business.name}
+          period={period}
+          tickets={periodTickets}
+          expenses={periodExpenses}
+          reporting={reporting}
+        />
+      )}
+      {tab === "balance" && (
+        <BalanceSheetCard businessName={business.name} tickets={paid} reporting={reporting} />
+      )}
+      {tab === "tax" && (
+        <SalesTaxCard
+          businessName={business.name}
+          period={period}
+          tickets={periodTickets}
+          taxRateBps={business.taxRateBps}
+          reporting={reporting}
+        />
+      )}
+      {tab === "expenses" && <ExpensesCard period={period} expenses={periodExpenses} />}
+    </section>
+  );
+}
+
+function IncomeStatementCard({
+  businessName,
+  period,
+  tickets,
+  expenses,
+  reporting
+}: {
+  businessName: string;
+  period: Period;
+  tickets: PosTicketRecord[];
+  expenses: ExpenseRecord[];
+  reporting: ReportingSettings;
+}) {
+  const statement = buildIncomeStatement(tickets, expenses, reporting);
+  const sharePercent = reporting.revenueShareBps / 100;
+
+  function exportCsv() {
+    const rows: string[][] = [
+      [businessName, ""],
+      ["Income Statement", periodRangeLabel(period)],
+      ["", ""],
+      ["Gross receipts", dollars(statement.grossReceiptsCents)],
+      ["Less: sales tax collected", `(${dollars(statement.salesTaxCents)})`],
+      ["Net sales", dollars(statement.netSalesCents)],
+      ["", ""],
+      [`Admin revenue share (${sharePercent}% of net sales)`, dollars(statement.adminShareCents)],
+      ...statement.expenseLines.map((line) => [line.label, dollars(line.amountCents)]),
+      ["Total expenses", dollars(statement.totalExpensesCents)],
+      ["", ""],
+      ["Owner net income", dollars(statement.ownerNetIncomeCents)]
+    ];
+    downloadCsv(`bbt-income-statement-${period.id}-${businessTodayKey()}.csv`, rows);
+  }
+
+  return (
+    <article className="admin-card report-card">
+      <header className="report-heading">
+        <p className="eyebrow">{businessName}</p>
+        <h2>Income Statement</h2>
+        <p className="muted">{periodRangeLabel(period)}</p>
+      </header>
+      <div className="report-lines">
+        <ReportLine label="Gross receipts" cents={statement.grossReceiptsCents} />
+        <ReportLine
+          label="Less: sales tax collected"
+          cents={statement.salesTaxCents}
+          indent
+          negative
+        />
+        <ReportLine label="Net sales" cents={statement.netSalesCents} total />
+      </div>
+      <h3 className="report-subhead">Expenses</h3>
+      <div className="report-lines">
+        <ReportLine
+          label={`Admin revenue share (${sharePercent}% of net sales)`}
+          cents={statement.adminShareCents}
+          indent
+        />
+        {statement.expenseLines.map((line) => (
+          <ReportLine key={line.category} label={line.label} cents={line.amountCents} indent />
+        ))}
+        <ReportLine label="Total expenses" cents={statement.totalExpensesCents} total />
+        <ReportLine label="Owner net income" cents={statement.ownerNetIncomeCents} total />
+      </div>
+      <div className="order-group-stats report-split">
+        <div>
+          <span>Owner net income</span>
+          <strong>{formatMoney(statement.ownerNetIncomeCents)}</strong>
+        </div>
+        <div>
+          <span>Admin share ({sharePercent}%)</span>
+          <strong>{formatMoney(statement.adminShareCents)}</strong>
+        </div>
+        <div>
+          <span>Sales tax set aside</span>
+          <strong>{formatMoney(statement.salesTaxCents)}</strong>
+        </div>
+        <div>
+          <span>Operating expenses</span>
+          <strong>{formatMoney(statement.operatingExpensesCents)}</strong>
+        </div>
+      </div>
+      <button className="button button-primary" type="button" onClick={exportCsv}>
+        <Download size={18} />
+        Export Income Statement
+      </button>
+    </article>
+  );
+}
+
+function BalanceSheetCard({
+  businessName,
+  tickets,
+  reporting
+}: {
+  businessName: string;
+  tickets: PosTicketRecord[];
+  reporting: ReportingSettings;
+}) {
+  const sheet = buildBalanceSheet(tickets, reporting);
+
+  function exportCsv() {
+    const rows: string[][] = [
+      [businessName, ""],
+      ["Balance Sheet", `As of ${sheet.asOfKey}`],
+      ["", ""],
+      ["Assets", ""],
+      ["Cash on hand", dollars(sheet.cashOnHandCents)],
+      ["Equipment", dollars(sheet.equipmentAssetsCents)],
+      ["Other assets", dollars(sheet.otherAssetsCents)],
+      ["Total assets", dollars(sheet.totalAssetsCents)],
+      ["", ""],
+      ["Liabilities", ""],
+      ["Sales tax payable", dollars(sheet.salesTaxPayableCents)],
+      ["Admin revenue share payable", dollars(sheet.adminSharePayableCents)],
+      ["Other liabilities", dollars(sheet.otherLiabilitiesCents)],
+      ["Total liabilities", dollars(sheet.totalLiabilitiesCents)],
+      ["", ""],
+      ["Owner's equity", dollars(sheet.ownerEquityCents)]
+    ];
+    downloadCsv(`bbt-balance-sheet-${sheet.asOfKey}.csv`, rows);
+  }
+
+  return (
+    <article className="admin-card report-card">
+      <header className="report-heading">
+        <p className="eyebrow">{businessName}</p>
+        <h2>Balance Sheet</h2>
+        <p className="muted">As of {sheet.asOfKey}</p>
+      </header>
+      <h3 className="report-subhead">Assets</h3>
+      <div className="report-lines">
+        <ReportLine label="Cash on hand" cents={sheet.cashOnHandCents} indent />
+        <ReportLine label="Equipment" cents={sheet.equipmentAssetsCents} indent />
+        <ReportLine label="Other assets" cents={sheet.otherAssetsCents} indent />
+        <ReportLine label="Total assets" cents={sheet.totalAssetsCents} total />
+      </div>
+      <h3 className="report-subhead">Liabilities</h3>
+      <div className="report-lines">
+        <ReportLine label="Sales tax payable" cents={sheet.salesTaxPayableCents} indent />
+        <ReportLine label="Admin revenue share payable" cents={sheet.adminSharePayableCents} indent />
+        <ReportLine label="Other liabilities" cents={sheet.otherLiabilitiesCents} indent />
+        <ReportLine label="Total liabilities" cents={sheet.totalLiabilitiesCents} total />
+      </div>
+      <h3 className="report-subhead">Equity</h3>
+      <div className="report-lines">
+        <ReportLine label="Owner's equity (assets − liabilities)" cents={sheet.ownerEquityCents} total />
+      </div>
+      <p className="muted">
+        Cash, equipment, and other asset/liability values come from Report Settings. Sales tax
+        payable and admin share payable are calculated from all-time sales minus what you've
+        recorded as remitted/paid.
+      </p>
+      <button className="button button-primary" type="button" onClick={exportCsv}>
+        <Download size={18} />
+        Export Balance Sheet
+      </button>
+    </article>
+  );
+}
+
+function SalesTaxCard({
+  businessName,
+  period,
+  tickets,
+  taxRateBps,
+  reporting
+}: {
+  businessName: string;
+  period: Period;
+  tickets: PosTicketRecord[];
+  taxRateBps: number;
+  reporting: ReportingSettings;
+}) {
+  const report = buildSalesTaxReport(tickets, taxRateBps);
+
+  function exportCsv() {
+    const rows: string[][] = [
+      [businessName, ""],
+      ["Sales & Use Tax Report", periodRangeLabel(period)],
+      ["Jurisdiction", reporting.taxJurisdiction || "—"],
+      ["Tax account #", reporting.taxAccountNumber || "—"],
+      ["Filing frequency", reporting.filingFrequency],
+      ["", ""],
+      ["Gross sales (excluding tax)", dollars(report.grossSalesCents)],
+      ["Exempt sales", dollars(report.exemptSalesCents)],
+      ["Taxable sales", dollars(report.taxableSalesCents)],
+      ["Tax rate", `${report.taxRateBps / 100}%`],
+      ["Tax calculated at rate", dollars(report.taxCalculatedCents)],
+      ["Tax actually collected", dollars(report.taxCollectedCents)],
+      ["Rounding difference", dollars(report.roundingDifferenceCents)]
+    ];
+    downloadCsv(`bbt-sales-tax-${period.id}-${businessTodayKey()}.csv`, rows);
+  }
+
+  return (
+    <article className="admin-card report-card">
+      <header className="report-heading">
+        <p className="eyebrow">{businessName}</p>
+        <h2>Sales &amp; Use Tax Report</h2>
+        <p className="muted">{periodRangeLabel(period)}</p>
+      </header>
+      <div className="report-lines">
+        <div className="report-line">
+          <span>Jurisdiction</span>
+          <strong>{reporting.taxJurisdiction || "Set in Report Settings"}</strong>
+        </div>
+        <div className="report-line">
+          <span>Tax account #</span>
+          <strong>{reporting.taxAccountNumber || "Set in Report Settings"}</strong>
+        </div>
+        <div className="report-line">
+          <span>Filing frequency</span>
+          <strong>{reporting.filingFrequency}</strong>
+        </div>
+      </div>
+      <h3 className="report-subhead">Return figures</h3>
+      <div className="report-lines">
+        <ReportLine label="Gross sales (excluding tax)" cents={report.grossSalesCents} indent />
+        <ReportLine label="Exempt sales" cents={report.exemptSalesCents} indent />
+        <ReportLine label="Taxable sales" cents={report.taxableSalesCents} total />
+        <div className="report-line indent">
+          <span>Tax rate</span>
+          <strong>{report.taxRateBps / 100}%</strong>
+        </div>
+        <ReportLine label="Tax calculated at rate" cents={report.taxCalculatedCents} indent />
+        <ReportLine label="Tax actually collected" cents={report.taxCollectedCents} total />
+        <ReportLine label="Rounding difference" cents={report.roundingDifferenceCents} indent />
+      </div>
+      <button className="button button-primary" type="button" onClick={exportCsv}>
+        <Download size={18} />
+        Export Tax Report
+      </button>
+    </article>
+  );
+}
+
+function ExpensesCard({ period, expenses }: { period: Period; expenses: ExpenseRecord[] }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const totalCents = expenses.reduce((sum, expense) => sum + expense.amountCents, 0);
+
+  async function handleAdd(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const amountCents = Math.round(Number(form.get("amount")) * 100);
+    const dateKey = String(form.get("date") ?? "");
+    if (!dateKey || !Number.isFinite(amountCents) || amountCents <= 0) {
+      setError("Enter a date and a positive amount.");
+      return;
+    }
+    setError("");
+    setBusy(true);
+    try {
+      await addExpense({
+        dateKey,
+        category: (form.get("category") as ExpenseCategory) || "other",
+        amountCents,
+        note: String(form.get("note") ?? "").trim()
+      });
+      formElement.reset();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save the expense.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDelete(expense: ExpenseRecord) {
+    if (!window.confirm(`Delete ${formatMoney(expense.amountCents)} ${expenseCategoryLabels[expense.category]}?`)) {
+      return;
+    }
+    try {
+      await deleteExpense(expense.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete the expense.");
+    }
+  }
+
+  return (
+    <article className="admin-card report-card">
+      <h2>Expenses</h2>
+      <form className="form-grid expense-form" onSubmit={handleAdd}>
+        <label>
+          Date
+          <input name="date" type="date" defaultValue={businessTodayKey()} required />
+        </label>
+        <label>
+          Category
+          <select name="category" defaultValue="ingredients">
+            {(Object.keys(expenseCategoryLabels) as ExpenseCategory[]).map((category) => (
+              <option key={category} value={category}>
+                {expenseCategoryLabels[category]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Amount ($)
+          <input name="amount" type="number" min="0.01" step="0.01" inputMode="decimal" required />
+        </label>
+        <label>
+          Note
+          <input name="note" placeholder="e.g. masa, husks, propane" />
+        </label>
+        {error && (
+          <p className="form-notice form-notice-error full-span" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="button-row full-span">
+          <button className="button button-primary" type="submit" disabled={busy}>
+            <Plus size={18} />
+            {busy ? "Saving…" : "Add Expense"}
+          </button>
+        </div>
+      </form>
+
+      <div className="admin-row">
+        <span>
+          {expenses.length} expense{expenses.length === 1 ? "" : "s"} · {periodRangeLabel(period)}
+        </span>
+        <strong>{formatMoney(totalCents)}</strong>
+      </div>
+      {expenses.length === 0 ? (
+        <p className="muted">No expenses recorded for this period.</p>
+      ) : (
+        expenses.map((expense) => (
+          <div className="expense-row" key={expense.id}>
+            <span>{expense.dateKey}</span>
+            <div>
+              <strong>{expenseCategoryLabels[expense.category]}</strong>
+              {expense.note && <span className="muted"> — {expense.note}</span>}
+            </div>
+            <strong>{formatMoney(expense.amountCents)}</strong>
+            <button
+              className="button button-small"
+              type="button"
+              aria-label="Delete expense"
+              onClick={() => handleDelete(expense)}
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+        ))
+      )}
+    </article>
+  );
+}
+
+function ReportSettingsCard({ reporting }: { reporting: ReportingSettings }) {
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const sharePercent = Number(form.get("revenueShare"));
+    setSaved(false);
+    setError("");
+    if (!Number.isFinite(sharePercent) || sharePercent < 0 || sharePercent > 100) {
+      setError("Enter the revenue share as a percentage between 0 and 100.");
+      return;
+    }
+    const toCents = (name: string) => {
+      const value = Number(form.get(name) || "0");
+      return Number.isFinite(value) ? Math.round(value * 100) : 0;
+    };
+    setSaving(true);
+    try {
+      await saveReportingSettings({
+        revenueShareBps: Math.round(sharePercent * 100),
+        taxJurisdiction: String(form.get("taxJurisdiction") ?? "").trim(),
+        taxAccountNumber: String(form.get("taxAccountNumber") ?? "").trim(),
+        filingFrequency: (form.get("filingFrequency") as FilingFrequency) || "quarterly",
+        cashOnHandCents: toCents("cashOnHand"),
+        equipmentAssetsCents: toCents("equipmentAssets"),
+        otherAssetsCents: toCents("otherAssets"),
+        otherLiabilitiesCents: toCents("otherLiabilities"),
+        taxRemittedToDateCents: toCents("taxRemittedToDate"),
+        adminSharePaidToDateCents: toCents("adminSharePaidToDate")
+      });
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save report settings.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form
+      className="admin-card report-card form-grid"
+      key={JSON.stringify(reporting)}
+      onSubmit={handleSubmit}
+    >
+      <h2 className="full-span">Report Settings</h2>
+      <label>
+        Admin revenue share (%)
+        <input
+          name="revenueShare"
+          type="number"
+          min="0"
+          max="100"
+          step="0.1"
+          inputMode="decimal"
+          defaultValue={(reporting.revenueShareBps / 100).toString()}
+          required
+        />
+      </label>
+      <label>
+        Filing frequency
+        <select name="filingFrequency" defaultValue={reporting.filingFrequency}>
+          <option value="monthly">Monthly</option>
+          <option value="quarterly">Quarterly</option>
+          <option value="annually">Annually</option>
+        </select>
+      </label>
+      <label>
+        Tax jurisdiction
+        <input
+          name="taxJurisdiction"
+          defaultValue={reporting.taxJurisdiction}
+          placeholder="e.g. Colorado / City of Westminster"
+        />
+      </label>
+      <label>
+        Sales tax account #
+        <input name="taxAccountNumber" defaultValue={reporting.taxAccountNumber} />
+      </label>
+      <label>
+        Cash on hand ($)
+        <input
+          name="cashOnHand"
+          type="number"
+          min="0"
+          step="0.01"
+          inputMode="decimal"
+          defaultValue={dollars(reporting.cashOnHandCents)}
+        />
+      </label>
+      <label>
+        Equipment value ($)
+        <input
+          name="equipmentAssets"
+          type="number"
+          min="0"
+          step="0.01"
+          inputMode="decimal"
+          defaultValue={dollars(reporting.equipmentAssetsCents)}
+        />
+      </label>
+      <label>
+        Other assets ($)
+        <input
+          name="otherAssets"
+          type="number"
+          min="0"
+          step="0.01"
+          inputMode="decimal"
+          defaultValue={dollars(reporting.otherAssetsCents)}
+        />
+      </label>
+      <label>
+        Other liabilities ($)
+        <input
+          name="otherLiabilities"
+          type="number"
+          min="0"
+          step="0.01"
+          inputMode="decimal"
+          defaultValue={dollars(reporting.otherLiabilitiesCents)}
+        />
+      </label>
+      <label>
+        Sales tax remitted to date ($)
+        <input
+          name="taxRemittedToDate"
+          type="number"
+          min="0"
+          step="0.01"
+          inputMode="decimal"
+          defaultValue={dollars(reporting.taxRemittedToDateCents)}
+        />
+      </label>
+      <label>
+        Admin share paid to date ($)
+        <input
+          name="adminSharePaidToDate"
+          type="number"
+          min="0"
+          step="0.01"
+          inputMode="decimal"
+          defaultValue={dollars(reporting.adminSharePaidToDateCents)}
+        />
+      </label>
+      {error && (
+        <p className="form-notice form-notice-error full-span" role="alert">
+          {error}
+        </p>
+      )}
+      {saved && (
+        <p className="form-notice full-span" role="status">
+          Report settings saved.
+        </p>
+      )}
+      <div className="button-row full-span">
+        <button className="button button-primary" type="submit" disabled={saving}>
+          {saving ? "Saving…" : "Save Report Settings"}
         </button>
       </div>
-      {pos.loading ? (
-        <p className="muted">Loading sales…</p>
-      ) : pos.error ? (
-        <p className="muted">Sales unavailable: {pos.error}</p>
-      ) : paid.length === 0 ? (
-        <p className="muted">No sales recorded yet. Take one in Live POS.</p>
-      ) : (
-        <>
-          <div className="admin-row">
-            <span>{paid.length} sales</span>
-            <strong>{formatMoney(totalCents)}</strong>
-          </div>
-          {paid.map((ticket) => (
-            <div className="production-row" key={ticket.id}>
-              <span>{ticket.ticketNumber}</span>
-              <strong>{formatBusinessDateTime(ticket.createdAtUtc)}</strong>
-              <span>{ticket.items.map((item) => `${item.quantity} ${item.productName}`).join(", ")}</span>
-              <span>{paymentLabels[ticket.paymentMethod]}</span>
-              <strong>{formatMoney(ticket.totalCents)}</strong>
-            </div>
-          ))}
-        </>
-      )}
-    </section>
+    </form>
   );
 }
