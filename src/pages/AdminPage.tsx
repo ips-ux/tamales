@@ -19,7 +19,7 @@ import {
   Users,
   X
 } from "lucide-react";
-import { Dispatch, FormEvent, SetStateAction, useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { ChangePasswordForm } from "../components/ChangePasswordForm";
 import { ImagePicker } from "../components/ImagePicker";
 import { QRCodePanel } from "../components/QRCodePanel";
@@ -45,6 +45,7 @@ import {
   reportingDefaults,
   saveBusinessSettings,
   saveMenuItem,
+  savePaymentSettings,
   savePosTicket,
   saveReportingSettings,
   saveTestMode,
@@ -54,6 +55,7 @@ import {
   watchAppState,
   watchExpenses,
   watchInventory,
+  watchPaymentSettings,
   watchInventoryAdjustments,
   watchMarketingSignups,
   watchPosTickets,
@@ -186,6 +188,17 @@ export function AdminPage({ path }: AdminPageProps) {
     seedMenuItemsIfEmpty(menuProducts).catch(() => undefined);
   }, []);
 
+  // Payment accounts live in settings/payments; fixture values are only the
+  // fallback until the stored doc loads (or before the first save).
+  useEffect(
+    () =>
+      watchPaymentSettings(
+        (stored) => setPayments({ ...initialPaymentSettings, ...stored }),
+        () => undefined
+      ),
+    []
+  );
+
   useEffect(
     () =>
       watchAppState(
@@ -261,12 +274,7 @@ export function AdminPage({ path }: AdminPageProps) {
       {title === "Vendor" && <VendorAdminView />}
       {title === "Contacts" && <ContactsView />}
       {title === "Settings" && (
-        <SettingsView
-          payments={payments}
-          setPayments={setPayments}
-          products={products}
-          testMode={testMode}
-        />
+        <SettingsView payments={payments} products={products} testMode={testMode} />
       )}
       {title === "Reports" && <ReportsView pos={pos} />}
     </main>
@@ -1830,12 +1838,10 @@ const settingsTabs: { id: SettingsTab; label: string }[] = [
 
 function SettingsView({
   payments,
-  setPayments,
   products,
   testMode
 }: {
   payments: PaymentSettings;
-  setPayments: Dispatch<SetStateAction<PaymentSettings>>;
   products: MenuProduct[];
   testMode: boolean;
 }) {
@@ -1871,7 +1877,7 @@ function SettingsView({
         </div>
       )}
       {tab === "inventory" && <InventorySettings products={products} />}
-      {tab === "payments" && <PaymentSettingsCard payments={payments} setPayments={setPayments} />}
+      {tab === "payments" && <PaymentSettingsCard payments={payments} />}
       {tab === "reports" && <ReportSettingsTab />}
     </section>
   );
@@ -1930,29 +1936,42 @@ function OperatingModeCard({ testMode }: { testMode: boolean }) {
   );
 }
 
-function PaymentSettingsCard({
-  payments,
-  setPayments
-}: {
-  payments: PaymentSettings;
-  setPayments: Dispatch<SetStateAction<PaymentSettings>>;
-}) {
-  function saveSettings(event: FormEvent<HTMLFormElement>) {
+function PaymentSettingsCard({ payments }: { payments: PaymentSettings }) {
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+
+  async function saveSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    setPayments({
-      id: "default",
-      cashAppCashtag: String(form.get("cashAppCashtag") ?? ""),
-      paypalMe: String(form.get("paypalMe") ?? ""),
-      venmoHandle: String(form.get("venmoHandle") ?? ""),
-      zelleContact: String(form.get("zelleContact") ?? ""),
-      applePayEnabled: form.get("applePayEnabled") === "on",
-      applePayNote: String(form.get("applePayNote") ?? "")
-    });
+    setSaved(false);
+    setError("");
+    setSaving(true);
+    try {
+      await savePaymentSettings({
+        cashAppCashtag: String(form.get("cashAppCashtag") ?? "").trim(),
+        paypalMe: String(form.get("paypalMe") ?? "").trim(),
+        venmoHandle: String(form.get("venmoHandle") ?? "").trim(),
+        zelleContact: String(form.get("zelleContact") ?? "").trim(),
+        applePayEnabled: form.get("applePayEnabled") === "on",
+        applePayNote: String(form.get("applePayNote") ?? "").trim()
+      });
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save payment settings.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
-    <form className="admin-card settings-list settings-panel" onSubmit={saveSettings}>
+    <form
+      className="admin-card settings-list settings-panel"
+      // Remount when the stored accounts arrive so the fields pick up the
+      // loaded values as their defaults.
+      key={`${payments.cashAppCashtag}|${payments.paypalMe}|${payments.venmoHandle}|${payments.zelleContact}|${payments.applePayEnabled}|${payments.applePayNote}`}
+      onSubmit={saveSettings}
+    >
       <Settings size={24} />
       <h2>Payment Accounts</h2>
       <label>
@@ -1979,8 +1998,18 @@ function PaymentSettingsCard({
         <input name="applePayEnabled" type="checkbox" defaultChecked={payments.applePayEnabled} />
         <span>Enable Apple Pay once merchant processing is ready</span>
       </label>
-      <button className="button button-primary" type="submit">
-        Save Payment Settings
+      {error && (
+        <p className="form-notice form-notice-error" role="alert">
+          {error}
+        </p>
+      )}
+      {saved && (
+        <p className="form-notice" role="status">
+          Payment accounts saved. The POS uses them immediately.
+        </p>
+      )}
+      <button className="button button-primary" type="submit" disabled={saving}>
+        {saving ? "Saving…" : "Save Payment Settings"}
       </button>
     </form>
   );

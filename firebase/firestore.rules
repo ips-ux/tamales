@@ -48,6 +48,11 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Payment accounts for the POS QR checkout. Owner-only.
+    match /settings/payments {
+      allow read, write: if isAdmin();
+    }
+
     // Stock levels and the adjustment audit log. Owner-only.
     match /inventory/{productId} {
       allow read, write: if isAdmin();

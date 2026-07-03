@@ -295,6 +295,55 @@ export async function saveBusinessSettings(settings: EditableBusinessSettings): 
   await setDoc(doc(db(), SETTINGS_COLLECTION, BUSINESS_SETTINGS_DOC), settings, { merge: true });
 }
 
+// Payment accounts the POS QR checkout charges to. Owner-only (rules) since
+// only the signed-in POS reads them.
+export interface EditablePaymentSettings {
+  cashAppCashtag: string;
+  paypalMe: string;
+  venmoHandle: string;
+  zelleContact: string;
+  applePayEnabled: boolean;
+  applePayNote: string;
+}
+
+const PAYMENT_SETTINGS_DOC = "payments";
+
+export function watchPaymentSettings(
+  onData: (settings: Partial<EditablePaymentSettings>) => void,
+  onError: (error: Error) => void
+): () => void {
+  if (!firebaseConfigured()) {
+    onError(new Error("Firebase is not configured."));
+    return () => undefined;
+  }
+  return onSnapshot(
+    doc(db(), SETTINGS_COLLECTION, PAYMENT_SETTINGS_DOC),
+    (snapshot) => {
+      const data = snapshot.data();
+      if (!data) {
+        onData({});
+        return;
+      }
+      const settings: Partial<EditablePaymentSettings> = {};
+      if (typeof data.cashAppCashtag === "string") settings.cashAppCashtag = data.cashAppCashtag;
+      if (typeof data.paypalMe === "string") settings.paypalMe = data.paypalMe;
+      if (typeof data.venmoHandle === "string") settings.venmoHandle = data.venmoHandle;
+      if (typeof data.zelleContact === "string") settings.zelleContact = data.zelleContact;
+      if (typeof data.applePayEnabled === "boolean") settings.applePayEnabled = data.applePayEnabled;
+      if (typeof data.applePayNote === "string") settings.applePayNote = data.applePayNote;
+      onData(settings);
+    },
+    (error) => onError(error)
+  );
+}
+
+export async function savePaymentSettings(settings: EditablePaymentSettings): Promise<void> {
+  if (!firebaseConfigured()) {
+    throw new Error("Firebase is not configured. Add VITE_FIREBASE values to .env.local.");
+  }
+  await setDoc(doc(db(), SETTINGS_COLLECTION, PAYMENT_SETTINGS_DOC), settings, { merge: true });
+}
+
 export interface PosTicketUpdate {
   items: PosTicketItem[];
   subtotalCents: number;
