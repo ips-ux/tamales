@@ -356,7 +356,8 @@ function PosView({
   testMode: boolean;
 }) {
   const [items, setItems] = useState<PosTicketItem[]>([]);
-  const [checkout, setCheckout] = useState(false);
+  // Wizard stage inside the ticket panel: review the cart, then take payment.
+  const [stage, setStage] = useState<"cart" | "pay">("cart");
   const [ticketOpen, setTicketOpen] = useState(false);
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [saving, setSaving] = useState(false);
@@ -404,7 +405,7 @@ function PosView({
 
   function clearTicket() {
     setItems([]);
-    setCheckout(false);
+    setStage("cart");
     setTicketOpen(false);
     setMethod("cash");
     setSaveError(null);
@@ -488,145 +489,187 @@ function PosView({
       )}
 
       <aside className={`pos-ticket${ticketOpen ? " pos-ticket-open" : ""}`} aria-label="Current ticket">
-        <div className="pos-ticket-header">
-          <div>
-            <p className="eyebrow">{testMode ? "Test Ticket" : "Live Ticket"}</p>
-            <h2>{formatMoney(totalCents)}</h2>
-          </div>
-          <div className="button-row">
-            <button className="button button-small" type="button" onClick={clearTicket} disabled={items.length === 0}>
-              Clear
-            </button>
-            <button
-              className="button button-small pos-ticket-close"
-              type="button"
-              aria-label="Close ticket"
-              onClick={() => setTicketOpen(false)}
-            >
-              <X size={18} />
-            </button>
-          </div>
-        </div>
-
-        <div className="pos-ticket-lines">
-          {items.length === 0 ? (
-            <p className="muted">Tap menu items to build the ticket.</p>
-          ) : (
-            items.map((item) => (
-              <div className="pos-ticket-line" key={item.productId}>
-                <div>
-                  <strong>{item.productName}</strong>
-                  {priceEditId === item.productId ? (
-                    <span className="pos-price-edit">
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        inputMode="decimal"
-                        value={priceDraft}
-                        aria-label={`New unit price for ${item.productName}`}
-                        onChange={(event) => setPriceDraft(event.target.value)}
-                      />
-                      <button
-                        className="button button-small"
-                        type="button"
-                        onClick={() => applyPriceOverride(item.productId)}
-                      >
-                        Set
-                      </button>
-                    </span>
-                  ) : (
-                    <button
-                      className="pos-price-button"
-                      type="button"
-                      title="Tap to override the price (comp / replacement)"
-                      onClick={() => {
-                        setPriceEditId(item.productId);
-                        setPriceDraft((item.unitPriceCents / 100).toFixed(2));
-                      }}
-                    >
-                      {item.unitPriceCents === 0
-                        ? "FREE — comp"
-                        : `${formatMoney(item.unitPriceCents)} each`}
-                    </button>
-                  )}
-                </div>
-                <div className="pos-qty">
-                  <button type="button" onClick={() => updateItem(item.productId, item.quantity - 1)}>
-                    -
-                  </button>
-                  <output>{item.quantity}</output>
-                  <button type="button" onClick={() => updateItem(item.productId, item.quantity + 1)}>
-                    +
-                  </button>
-                </div>
+        {stage === "cart" ? (
+          <>
+            <div className="pos-sheet-head">
+              <div>
+                <p className="eyebrow">{testMode ? "Test Ticket" : "Live Ticket"}</p>
+                <h2>{formatMoney(totalCents)}</h2>
               </div>
-            ))
-          )}
-        </div>
+              <div className="button-row">
+                <button
+                  className="button button-small"
+                  type="button"
+                  onClick={clearTicket}
+                  disabled={items.length === 0}
+                >
+                  Clear
+                </button>
+                <button
+                  className="button button-small pos-ticket-close"
+                  type="button"
+                  aria-label="Close ticket"
+                  onClick={() => setTicketOpen(false)}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
 
-        <div className="pos-totals">
-          <div>
-            <span>Subtotal</span>
-            <strong>{formatMoney(subtotalCents)}</strong>
-          </div>
-          <div>
-            <span>Tax</span>
-            <strong>{formatMoney(taxCents)}</strong>
-          </div>
-          <div>
-            <span>Total</span>
-            <strong>{formatMoney(totalCents)}</strong>
-          </div>
-        </div>
+            <div className="pos-sheet-body">
+              {items.length === 0 ? (
+                <p className="muted">Tap menu items to build the ticket.</p>
+              ) : (
+                items.map((item) => (
+                  <div className="pos-ticket-line" key={item.productId}>
+                    <div className="pos-line-info">
+                      <strong>{item.productName}</strong>
+                      {priceEditId === item.productId ? (
+                        <span className="pos-price-edit">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            inputMode="decimal"
+                            value={priceDraft}
+                            aria-label={`New unit price for ${item.productName}`}
+                            onChange={(event) => setPriceDraft(event.target.value)}
+                          />
+                          <button
+                            className="button button-small"
+                            type="button"
+                            onClick={() => applyPriceOverride(item.productId)}
+                          >
+                            Set
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          className="pos-price-button"
+                          type="button"
+                          title="Tap to override the price (comp / replacement)"
+                          onClick={() => {
+                            setPriceEditId(item.productId);
+                            setPriceDraft((item.unitPriceCents / 100).toFixed(2));
+                          }}
+                        >
+                          {item.unitPriceCents === 0
+                            ? "FREE — comp"
+                            : `${formatMoney(item.unitPriceCents)} each`}
+                        </button>
+                      )}
+                    </div>
+                    <div className="pos-qty">
+                      <button
+                        type="button"
+                        onClick={() => updateItem(item.productId, item.quantity - 1)}
+                      >
+                        -
+                      </button>
+                      <output>{item.quantity}</output>
+                      <button
+                        type="button"
+                        onClick={() => updateItem(item.productId, item.quantity + 1)}
+                      >
+                        +
+                      </button>
+                    </div>
+                    <strong className="pos-line-total">
+                      {formatMoney(item.quantity * item.unitPriceCents)}
+                    </strong>
+                  </div>
+                ))
+              )}
+            </div>
 
-        {!checkout ? (
-          <button
-            className="button button-primary pos-checkout"
-            type="button"
-            disabled={items.length === 0}
-            onClick={() => setCheckout(true)}
-          >
-            Checkout
-          </button>
+            <div className="pos-sheet-foot">
+              <p className="pos-foot-summary">
+                <span className="muted">
+                  Subtotal {formatMoney(subtotalCents)} · Tax {formatMoney(taxCents)}
+                </span>
+                <strong>{formatMoney(totalCents)}</strong>
+              </p>
+              <button
+                className="button button-primary"
+                type="button"
+                disabled={items.length === 0}
+                onClick={() => setStage("pay")}
+              >
+                Charge {formatMoney(totalCents)}
+              </button>
+            </div>
+          </>
         ) : (
-          <div className="pos-checkout-panel">
-            <fieldset>
-              <legend>Payment platform</legend>
-              {(Object.keys(paymentLabels) as PaymentMethod[]).map((key) => (
-                <label className={key === "applepay" && !payments.applePayEnabled ? "choice-disabled" : ""} key={key}>
-                  <input
-                    type="radio"
-                    name="pos-payment"
-                    value={key}
-                    checked={method === key}
-                    disabled={key === "applepay" && !payments.applePayEnabled}
-                    onChange={() => setMethod(key)}
+          <>
+            <div className="pos-sheet-head">
+              <button className="button button-small" type="button" onClick={() => setStage("cart")}>
+                <ArrowLeft size={16} />
+                Ticket
+              </button>
+              <div className="pos-pay-amount">
+                <p className="eyebrow">{testMode ? "Test Charge" : "Charge"}</p>
+                <h2>{formatMoney(totalCents)}</h2>
+              </div>
+              <button
+                className="button button-small pos-ticket-close"
+                type="button"
+                aria-label="Close ticket"
+                onClick={() => setTicketOpen(false)}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="pos-sheet-body">
+              <fieldset className="pos-pay-methods">
+                <legend>Payment</legend>
+                {(Object.keys(paymentLabels) as PaymentMethod[]).map((key) => (
+                  <label
+                    className={key === "applepay" && !payments.applePayEnabled ? "choice-disabled" : ""}
+                    key={key}
+                  >
+                    <input
+                      type="radio"
+                      name="pos-payment"
+                      value={key}
+                      checked={method === key}
+                      disabled={key === "applepay" && !payments.applePayEnabled}
+                      onChange={() => setMethod(key)}
+                    />
+                    <span>{paymentLabels[key]}</span>
+                  </label>
+                ))}
+              </fieldset>
+              {method === "cash" ? (
+                <p className="muted">Collect cash from the customer, then tap Mark Paid.</p>
+              ) : (
+                <div className="pos-pay-qr">
+                  <QRCodePanel
+                    url={methodUrl(method, payments, totalCents)}
+                    title={`Pay with ${paymentLabels[method]}`}
+                    eventName={formatMoney(totalCents)}
+                    alt={`QR code for ${paymentLabels[method]} payment`}
                   />
-                  <span>{paymentLabels[key]}</span>
-                </label>
-              ))}
-            </fieldset>
-            {method === "cash" ? (
-              <p className="muted">Collect cash from the customer, then tap Mark Paid.</p>
-            ) : (
-              <QRCodePanel
-                url={methodUrl(method, payments, totalCents)}
-                title={`Pay with ${paymentLabels[method]}`}
-                eventName={formatMoney(totalCents)}
-                alt={`QR code for ${paymentLabels[method]} payment`}
-              />
-            )}
-            {saveError && <p className="muted">Could not save: {saveError}</p>}
-            <button
-              className="button button-primary"
-              type="button"
-              onClick={handleMarkPaid}
-              disabled={saving}
-            >
-              {saving ? "Saving…" : "Mark Paid + New Ticket"}
-            </button>
-          </div>
+                </div>
+              )}
+              {saveError && (
+                <p className="form-notice form-notice-error" role="alert">
+                  Could not save: {saveError}
+                </p>
+              )}
+            </div>
+
+            <div className="pos-sheet-foot">
+              <button
+                className="button button-primary"
+                type="button"
+                onClick={handleMarkPaid}
+                disabled={saving}
+              >
+                {saving ? "Saving…" : `Mark Paid — ${formatMoney(totalCents)}`}
+              </button>
+            </div>
+          </>
         )}
       </aside>
 
@@ -634,7 +677,10 @@ function PosView({
         <button
           className="pos-bar-summary"
           type="button"
-          onClick={() => setTicketOpen(true)}
+          onClick={() => {
+            setStage("cart");
+            setTicketOpen(true);
+          }}
           disabled={items.length === 0}
         >
           <span>
@@ -647,7 +693,7 @@ function PosView({
           type="button"
           disabled={items.length === 0}
           onClick={() => {
-            setCheckout(true);
+            setStage("pay");
             setTicketOpen(true);
           }}
         >

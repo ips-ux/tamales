@@ -1904,8 +1904,10 @@ textarea {
 .pos-ticket {
   position: sticky;
   top: 92px;
-  display: grid;
-  gap: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  max-height: calc(100dvh - 110px);
   padding: 1rem;
   background: rgba(255, 250, 241, 0.98);
   border: 1px solid var(--line);
@@ -1913,36 +1915,76 @@ textarea {
   box-shadow: var(--shadow);
 }
 
-.pos-ticket-header {
+.pos-sheet-head {
   display: flex;
-  align-items: start;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.pos-sheet-head h2 {
+  margin: 0;
+  font-size: 2rem;
+}
+
+.pos-sheet-head .eyebrow {
+  margin-bottom: 0.15rem;
+}
+
+.pos-pay-amount {
+  flex: 1;
+  text-align: center;
+}
+
+.pos-sheet-body {
+  display: grid;
+  flex: 1;
+  gap: 0.6rem;
+  align-content: start;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.pos-sheet-foot {
+  display: grid;
+  gap: 0.55rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--line);
+}
+
+.pos-sheet-foot .button {
+  width: 100%;
+  min-height: 56px;
+  font-size: 1.05rem;
+}
+
+.pos-foot-summary {
+  display: flex;
   justify-content: space-between;
   gap: 1rem;
-}
-
-.pos-ticket-header h2 {
-  margin-bottom: 0;
-}
-
-.pos-ticket-lines {
-  display: grid;
-  gap: 0.7rem;
+  margin: 0;
+  font-weight: 900;
 }
 
 .pos-ticket-line {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.8rem;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.6rem;
   align-items: center;
-  padding: 0.85rem;
+  padding: 0.55rem 0.7rem;
   background: var(--cream);
   border: 1px solid var(--line);
   border-radius: var(--radius);
 }
 
-.pos-ticket-line span {
-  display: block;
-  color: var(--muted);
+.pos-line-info {
+  min-width: 0;
+}
+
+.pos-line-total {
+  min-width: 58px;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .pos-qty {
@@ -1970,63 +2012,53 @@ textarea {
   font-weight: 900;
 }
 
-.pos-totals {
-  display: grid;
-  gap: 0.55rem;
-}
-
-.pos-totals div {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  padding-top: 0.55rem;
-  border-top: 1px solid var(--line);
-}
-
-.pos-totals div:last-child {
-  font-size: 1.2rem;
-}
-
-.pos-checkout {
-  width: 100%;
-}
-
-.pos-checkout-panel {
-  display: grid;
-  gap: 1rem;
-}
-
-.pos-checkout-panel fieldset {
+.pos-pay-methods {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.65rem;
+  gap: 0.5rem;
   padding: 0;
   margin: 0;
   border: 0;
 }
 
-.pos-checkout-panel legend {
+.pos-pay-methods legend {
   grid-column: 1 / -1;
   margin-bottom: 0.2rem;
   font-weight: 900;
 }
 
-.pos-checkout-panel label {
+.pos-pay-methods label {
   display: flex;
   align-items: center;
   gap: 0.55rem;
-  min-height: 52px;
-  padding: 0.7rem;
+  min-height: 48px;
+  padding: 0.55rem 0.7rem;
   font-weight: 900;
   background: var(--cream);
   border: 1px solid var(--line);
   border-radius: var(--radius);
 }
 
-.pos-checkout-panel input {
-  width: 22px;
-  min-height: 22px;
+.pos-pay-methods input {
+  width: 20px;
+  min-height: 20px;
   accent-color: var(--red);
+}
+
+.pos-pay-qr {
+  display: grid;
+  justify-items: center;
+}
+
+.pos-pay-qr .qr-panel {
+  width: 100%;
+  max-width: 320px;
+  box-shadow: none;
+}
+
+.pos-pay-qr .qr-image {
+  width: min(210px, 52vw);
+  margin: 0 auto;
 }
 
 .admin-thumb {
@@ -2428,18 +2460,22 @@ textarea {
     padding-bottom: 96px;
   }
 
+  /* Full-screen wizard: each POS stage owns the viewport, no page scrolling.
+     The body area scrolls internally only when a ticket has many lines. */
   .pos-ticket {
     position: fixed;
-    top: auto;
+    top: 0;
     right: 0;
     bottom: 0;
     left: 0;
     z-index: 40;
-    max-height: 85dvh;
-    overflow-y: auto;
+    height: 100dvh;
+    max-height: none;
+    overflow: hidden;
     margin: 0;
+    padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom));
     visibility: hidden;
-    border-radius: 16px 16px 0 0;
+    border-radius: 0;
     transform: translateY(100%);
     transition:
       transform 220ms ease,
@@ -2543,12 +2579,14 @@ textarea {
     padding: 0.85rem;
   }
 
-  .pos-ticket-line {
-    grid-template-columns: 1fr;
+  .pos-qty {
+    grid-template-columns: 38px 30px 38px;
   }
 
-  .pos-checkout-panel fieldset {
-    grid-template-columns: 1fr;
+  .pos-qty button {
+    width: 38px;
+    height: 38px;
+    font-size: 1.1rem;
   }
 
   .variant-row,
