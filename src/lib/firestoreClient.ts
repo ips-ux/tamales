@@ -3,6 +3,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   getFirestore,
   increment,
@@ -21,7 +22,13 @@ import {
   type WriteBatch
 } from "firebase/firestore";
 import { firebaseConfigured, getCurrentUser, getFirebaseApp } from "./firebaseClient";
-import type { MenuProduct, MenuVariant, PosTicketItem } from "./types";
+import type {
+  MenuProduct,
+  MenuVariant,
+  OrderRecord,
+  OrderStatus,
+  PosTicketItem
+} from "./types";
 
 export type PosPaymentMethod =
   | "cash"
@@ -37,6 +44,8 @@ export interface NewPosTicket {
   taxCents: number;
   totalCents: number;
   paymentMethod: PosPaymentMethod;
+  /** Optional name the order is for, e.g. to call out at pickup. */
+  customerName: string;
   /** Practice/demo sales; kept out of real reporting. */
   isTest: boolean;
 }
@@ -232,6 +241,7 @@ export function watchPosTickets(
           taxCents: (data.taxCents as number) ?? 0,
           totalCents: (data.totalCents as number) ?? 0,
           paymentMethod: (data.paymentMethod as PosPaymentMethod) ?? "cash",
+          customerName: (data.customerName as string) ?? "",
           isTest: Boolean(data.isTest),
           status: (data.status as "paid" | "void") ?? "paid",
           soldByEmail: (data.soldByEmail as string | null) ?? null,
@@ -350,6 +360,7 @@ export interface PosTicketUpdate {
   taxCents: number;
   totalCents: number;
   paymentMethod: PosPaymentMethod;
+  customerName: string;
 }
 
 export async function updatePosTicket(
@@ -415,6 +426,70 @@ export async function deletePosTicket(ticket: PosTicketRecord): Promise<void> {
     applyStockChange(batch, database, ticket.items, 1);
   }
   await batch.commit();
+}
+
+// ---------------------------------------------------------------------------
+// Public pre-orders. Order requests are written by unauthenticated customers
+// as create-only documents whose id is the unguessable publicToken, so the
+// confirmation link can fetch exactly one order and nothing else. The owner
+// reviews and confirms every request before it's final, so client-computed
+// totals are advisory, not trusted.
+// ---------------------------------------------------------------------------
+
+const ORDERS_COLLECTION = "orders";
+
+function mapOrderDoc(id: string, data: Record<string, unknown>): OrderRecord {
+  const record = data as unknown as OrderRecord;
+  return {
+    ...record,
+    id,
+    status: (data.status as OrderStatus) ?? "new",
+    items: Array.isArray(data.items) ? record.items : [],
+    privateNotes: (data.privateNotes as string) ?? ""
+  };
+}
+
+export async function submitPublicOrder(order: OrderRecord): Promise<void> {
+  if (!firebaseConfigured()) {
+    throw new Error("Ordering is temporarily unavailable. Please try again shortly.");
+  }
+  const { id, vendorSessionId, ...data } = order;
+  await setDoc(doc(db(), ORDERS_COLLECTION, order.publicToken), {
+    ...data,
+    vendorSessionId: vendorSessionId ?? ""
+  });
+}
+
+export async function fetchOrderByToken(publicToken: string): Promise<OrderRecord | null> {
+  if (!firebaseConfigured()) return null;
+  const snapshot = await getDoc(doc(db(), ORDERS_COLLECTION, publicToken));
+  if (!snapshot.exists()) return null;
+  return mapOrderDoc(snapshot.id, snapshot.data());
+}
+
+export function watchOrders(
+  onData: (orders: OrderRecord[]) => void,
+  onError: (error: Error) => void
+): () => void {
+  if (!firebaseConfigured()) {
+    onError(new Error("Firebase is not configured."));
+    return () => undefined;
+  }
+  const ordersQuery = query(collection(db(), ORDERS_COLLECTION), orderBy("createdAtUtc", "desc"));
+  return onSnapshot(
+    ordersQuery,
+    (snapshot) => {
+      onData(snapshot.docs.map((docSnapshot) => mapOrderDoc(docSnapshot.id, docSnapshot.data())));
+    },
+    (error) => onError(error)
+  );
+}
+
+export async function updateOrderStatus(id: string, status: OrderStatus): Promise<void> {
+  await updateDoc(doc(db(), ORDERS_COLLECTION, id), {
+    status,
+    updatedAtUtc: new Date().toISOString()
+  });
 }
 
 // ---------------------------------------------------------------------------

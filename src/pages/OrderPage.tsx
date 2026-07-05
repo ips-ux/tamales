@@ -8,9 +8,12 @@ import {
   pickupLocations
 } from "../data/fixtures";
 import { useBusinessSettings } from "../lib/businessSettings";
+import { receiptEmailConfigured, sendReceiptEmail } from "../lib/emailReceipt";
+import { submitPublicOrder } from "../lib/firestoreClient";
 import { useMenuProducts } from "../lib/menuStore";
+import { formatMoney } from "../lib/money";
 import { createLocalOrderRecord, generateIdempotencyKey, orderItemCount } from "../lib/order";
-import { formatWindow, isWindowSelectable } from "../lib/time";
+import { formatBusinessDateTime, formatWindow, isWindowSelectable } from "../lib/time";
 import type {
   BulkOrderInfo,
   CartSelection,
@@ -128,16 +131,38 @@ export function OrderPage() {
 
     let record: OrderRecord;
     try {
-      const response = await fetch("/api/public/orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draft)
-      });
-      if (!response.ok) throw new Error("Local API unavailable.");
-      record = (await response.json()) as OrderRecord;
-    } catch {
       record = createLocalOrderRecord(draft, menuProducts);
+      await submitPublicOrder(record);
+    } catch {
+      setErrors(["Your request could not be submitted. Check your connection and try again."]);
+      setSubmitting(false);
+      return;
     }
+
+    // Confirmation email is best-effort — never block the order on it.
+    if (receiptEmailConfigured() && record.customer.email) {
+      sendReceiptEmail({
+        toEmail: record.customer.email,
+        businessName: businessSettings.name,
+        ticketNumber: record.orderNumber,
+        purchasedAt: formatBusinessDateTime(record.createdAtUtc),
+        items: record.items.map((line) => ({
+          name: `${line.productName} — ${line.variantLabel}`,
+          quantity: line.quantity,
+          unitPrice: formatMoney(line.unitPriceCents),
+          lineTotal: formatMoney(line.lineTotalCents)
+        })),
+        subtotal: formatMoney(record.totals.subtotalCents),
+        tax: formatMoney(record.totals.taxCents),
+        total: formatMoney(record.totals.totalCents),
+        paymentMethod: "Pay at pickup",
+        customerName: record.customer.name,
+        heading: "Order Request",
+        footerNote: `This is an order request — ${businessSettings.shortName} will confirm by text, call, or email before it's final.`
+      }).catch(() => undefined);
+    }
+
+    // Keep a local copy so the confirmation page renders instantly.
     sessionStorage.setItem(`bbt-order-${record.publicToken}`, JSON.stringify(record));
     setSubmitting(false);
     navigate(`/order/confirmation/${record.publicToken}`);

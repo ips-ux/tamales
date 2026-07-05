@@ -1835,6 +1835,17 @@ textarea {
   opacity: 0.62;
 }
 
+.preorder-contact,
+.preorder-window {
+  margin: 0;
+}
+
+.preorder-contact a {
+  font-weight: 900;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .ticket-edit-line {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -2009,6 +2020,12 @@ textarea {
 }
 
 .pos-qty output {
+  font-weight: 900;
+}
+
+.pos-name-field {
+  display: grid;
+  gap: 0.45rem;
   font-weight: 900;
 }
 

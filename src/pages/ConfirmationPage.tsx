@@ -1,24 +1,62 @@
 import { CheckCircle2, ClipboardList } from "lucide-react";
+import { useEffect, useState } from "react";
 import { navigate } from "../App";
-import { availabilityWindows, pickupLocations, sampleOrders } from "../data/fixtures";
+import { availabilityWindows, pickupLocations } from "../data/fixtures";
+import { fetchOrderByToken } from "../lib/firestoreClient";
 import { formatMoney } from "../lib/money";
 import { formatWindow } from "../lib/time";
 import type { OrderRecord } from "../lib/types";
 
-function findOrder(publicToken: string): OrderRecord | undefined {
+function localCopy(publicToken: string): OrderRecord | null {
+  // The order page stashes a copy at submit time so this renders instantly;
+  // Firestore remains the source of truth for revisits from the email link.
   const stored = sessionStorage.getItem(`bbt-order-${publicToken}`);
-  if (stored) return JSON.parse(stored) as OrderRecord;
-  return sampleOrders.find((order) => order.publicToken === publicToken);
+  if (!stored) return null;
+  try {
+    return JSON.parse(stored) as OrderRecord;
+  } catch {
+    return null;
+  }
 }
 
 export function ConfirmationPage({ publicToken }: { publicToken: string }) {
-  const order = findOrder(publicToken);
+  const [order, setOrder] = useState<OrderRecord | null>(() => localCopy(publicToken));
+  const [loading, setLoading] = useState(order === null);
+
+  useEffect(() => {
+    let active = true;
+    fetchOrderByToken(publicToken)
+      .then((remote) => {
+        if (!active) return;
+        if (remote) setOrder(remote);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [publicToken]);
+
   const window = order
     ? availabilityWindows.find((item) => item.id === order.availabilityWindowId)
     : undefined;
   const location = window
     ? pickupLocations.find((item) => item.id === window.locationId)
     : undefined;
+
+  if (!order && loading) {
+    return (
+      <main className="page-shell narrow">
+        <section className="empty-state">
+          <ClipboardList size={42} />
+          <h1>Looking up your order</h1>
+          <p>One moment…</p>
+        </section>
+      </main>
+    );
+  }
 
   if (!order) {
     return (
@@ -42,8 +80,8 @@ export function ConfirmationPage({ publicToken }: { publicToken: string }) {
         <p className="eyebrow">Request Received</p>
         <h1>{order.orderNumber}</h1>
         <p>
-          Your request is in the owner queue. You will receive a confirmation through your preferred
-          contact method before the order is final.
+          Thanks, {order.customer.name}! Your request is in the owner queue. You will receive a
+          confirmation through your preferred contact method before the order is final.
         </p>
         <div className="summary-lines">
           {order.items.map((line) => (

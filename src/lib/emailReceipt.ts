@@ -40,6 +40,12 @@ export interface ReceiptEmailInput {
   tax: string;
   total: string;
   paymentMethod: string;
+  /** Name the order is for; rendered under the header when present. */
+  customerName?: string;
+  /** Header label; defaults to "Receipt" (pre-orders use "Order Request"). */
+  heading?: string;
+  /** Footer message; defaults to the thank-you/keep-this-receipt line. */
+  footerNote?: string;
   /**
    * Second-chance marketing CTA. Set only when the customer did NOT opt in at
    * checkout; the receipt then ends with a "sign me up" button to this URL.
@@ -103,7 +109,12 @@ export function buildReceiptHtml(input: ReceiptEmailInput): string {
         <tr><td style="height:6px;background:${MASA};line-height:6px;font-size:6px;">&nbsp;</td></tr>
         <tr>
           <td style="padding:24px 22px 6px;">
-            <div style="font-size:22px;font-weight:bold;color:${INK};">${business} <span style="color:${RED};">Receipt</span></div>
+            <div style="font-size:22px;font-weight:bold;color:${INK};">${business} <span style="color:${RED};">${escapeHtml(input.heading ?? "Receipt")}</span></div>
+            ${
+              input.customerName
+                ? `<div style="font-size:14px;font-weight:bold;color:${INK};padding-top:6px;">Order for ${escapeHtml(input.customerName)}</div>`
+                : ""
+            }
             <div style="font-size:13px;color:${MUTED};padding-top:4px;">Order time: ${escapeHtml(input.purchasedAt)}</div>
           </td>
         </tr>
@@ -141,8 +152,11 @@ export function buildReceiptHtml(input: ReceiptEmailInput): string {
         }
         <tr>
           <td style="margin-top:12px;padding:20px 22px;background:${INK};color:${CREAM};text-align:center;font-size:12px;line-height:1.6;">
-            Thank you for supporting ${business}!<br />
-            Keep this receipt for your records.
+            ${
+              input.footerNote
+                ? escapeHtml(input.footerNote)
+                : `Thank you for supporting ${business}!<br />Keep this receipt for your records.`
+            }
           </td>
         </tr>
       </table>

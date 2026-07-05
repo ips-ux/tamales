@@ -73,6 +73,45 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Public pre-order requests. Customers create exactly one well-shaped
+    // order whose id is its unguessable publicToken; the confirmation link
+    // fetches by that token (get), while listing and status changes stay
+    // owner-only. Totals are advisory — the owner confirms every request.
+    match /orders/{orderId} {
+      allow get: if true;
+      allow list: if isAdmin();
+      allow update, delete: if isAdmin();
+      allow create: if request.resource.data.keys().hasOnly([
+          'orderNumber', 'publicToken', 'status', 'paymentStatus',
+          'fulfillmentType', 'availabilityWindowId', 'customer', 'bulk',
+          'items', 'totals', 'createdAtUtc', 'updatedAtUtc', 'privateNotes',
+          'vendorSessionId'
+        ])
+        && request.resource.data.publicToken == orderId
+        && request.resource.data.status == 'new'
+        && request.resource.data.paymentStatus == 'unpaid'
+        && request.resource.data.privateNotes == ''
+        && request.resource.data.orderNumber is string
+        && request.resource.data.orderNumber.size() <= 40
+        && request.resource.data.customer is map
+        && request.resource.data.customer.name is string
+        && request.resource.data.customer.name.size() >= 1
+        && request.resource.data.customer.name.size() <= 120
+        && request.resource.data.customer.email is string
+        && request.resource.data.customer.email.size() <= 200
+        && request.resource.data.customer.mobile is string
+        && request.resource.data.customer.mobile.size() <= 40
+        && request.resource.data.items is list
+        && request.resource.data.items.size() >= 1
+        && request.resource.data.items.size() <= 40
+        && request.resource.data.totals is map
+        && request.resource.data.totals.totalCents is int
+        && request.resource.data.totals.totalCents >= 0
+        && request.resource.data.totals.totalCents <= 500000
+        && request.resource.data.createdAtUtc is string
+        && request.resource.data.createdAtUtc.size() <= 40;
+    }
+
     // Self-service signups from the public /updates landing page. Anyone can
     // create exactly one well-shaped signup document; only the owner can read
     // the list, so the collection can't be harvested.

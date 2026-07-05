@@ -51,7 +51,9 @@ import {
   saveTestMode,
   seedMenuItemsIfEmpty,
   setPosTicketStatus,
+  updateOrderStatus,
   updatePosTicket,
+  watchOrders,
   watchAppState,
   watchExpenses,
   watchInventory,
@@ -75,6 +77,7 @@ import {
 } from "../lib/firestoreClient";
 import { useMenuProducts } from "../lib/menuStore";
 import { formatMoney } from "../lib/money";
+import { canTransitionOrder } from "../lib/order";
 import {
   buildBalanceSheet,
   buildIncomeStatement,
@@ -91,6 +94,8 @@ import { businessDateKey, businessTodayKey, formatBusinessDateTime, formatWindow
 import type {
   MenuProduct,
   MenuVariant,
+  OrderRecord,
+  OrderStatus,
   PaymentSettings,
   PosTicketItem,
   ProductStatus,
@@ -108,6 +113,15 @@ interface PosState {
   loading: boolean;
   error: string | null;
 }
+
+const statusLabels: Record<OrderStatus, string> = {
+  new: "New",
+  confirmed: "Confirmed",
+  preparing: "Preparing",
+  ready: "Ready",
+  completed: "Completed",
+  canceled: "Canceled"
+};
 
 const paymentLabels: Record<PaymentMethod, string> = {
   cash: "Cash",
@@ -368,6 +382,7 @@ function PosView({
   const [stage, setStage] = useState<"cart" | "pay">("cart");
   const [ticketOpen, setTicketOpen] = useState(false);
   const [method, setMethod] = useState<PaymentMethod>("cash");
+  const [customerName, setCustomerName] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<PaidTicketSnapshot | null>(null);
@@ -416,6 +431,7 @@ function PosView({
     setStage("cart");
     setTicketOpen(false);
     setMethod("cash");
+    setCustomerName("");
     setSaveError(null);
     setPriceEditId(null);
   }
@@ -444,6 +460,7 @@ function PosView({
         taxCents,
         totalCents,
         paymentMethod: method,
+        customerName: customerName.trim(),
         isTest: testMode
       });
       setReceipt({
@@ -454,6 +471,7 @@ function PosView({
         taxCents,
         totalCents,
         method,
+        customerName: customerName.trim(),
         isTest: testMode
       });
       clearTicket();
@@ -629,6 +647,16 @@ function PosView({
             </div>
 
             <div className="pos-sheet-body">
+              <label className="pos-name-field">
+                Name for the order (optional)
+                <input
+                  type="text"
+                  value={customerName}
+                  autoComplete="off"
+                  placeholder="e.g. Maria"
+                  onChange={(event) => setCustomerName(event.target.value)}
+                />
+              </label>
               <fieldset className="pos-pay-methods">
                 <legend>Payment</legend>
                 {(Object.keys(paymentLabels) as PaymentMethod[]).map((key) => (
@@ -728,6 +756,7 @@ interface PaidTicketSnapshot {
   taxCents: number;
   totalCents: number;
   method: PaymentMethod;
+  customerName: string;
   isTest: boolean;
 }
 
@@ -778,6 +807,7 @@ function ReceiptDrawer({
           tax: formatMoney(ticket.taxCents),
           total: formatMoney(ticket.totalCents),
           paymentMethod: paymentLabels[ticket.method],
+          customerName: ticket.customerName || undefined,
           signupUrl: marketingOptIn
             ? undefined
             : `${window.location.origin}/updates?email=${encodeURIComponent(email)}`
@@ -861,35 +891,48 @@ function ReceiptDrawer({
   );
 }
 
+function useOrders() {
+  const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(
+    () =>
+      watchOrders(
+        (data) => {
+          setOrders(data);
+          setLoading(false);
+          setError(null);
+        },
+        (err) => {
+          setError(err.message);
+          setLoading(false);
+        }
+      ),
+    []
+  );
+  return { orders, loading, error };
+}
+
+const openOrderStatuses: OrderStatus[] = ["new", "confirmed", "preparing", "ready"];
+
 function OrdersView({ pos, products }: { pos: PosState; products: MenuProduct[] }) {
   const [group, setGroup] = useState<"overview" | "pos" | "preorders">("overview");
+  const preorders = useOrders();
   const todayKey = businessTodayKey();
   const paid = pos.tickets.filter((ticket) => ticket.status === "paid");
   const paidToday = paid.filter((ticket) => businessDateKey(ticket.createdAtUtc) === todayKey);
   const revenueToday = paidToday.reduce((sum, ticket) => sum + ticket.totalCents, 0);
   const revenueAllTime = paid.reduce((sum, ticket) => sum + ticket.totalCents, 0);
   const lastSale = paid[0];
+  const newRequests = preorders.orders.filter((order) => order.status === "new");
+  const openOrders = preorders.orders.filter((order) => openOrderStatuses.includes(order.status));
 
   if (group === "pos") {
     return <PosOrdersDetail pos={pos} products={products} onBack={() => setGroup("overview")} />;
   }
 
   if (group === "preorders") {
-    return (
-      <section className="admin-card">
-        <div className="toolbar">
-          <button className="button button-small" type="button" onClick={() => setGroup("overview")}>
-            <ArrowLeft size={16} />
-            All orders
-          </button>
-        </div>
-        <h2>Batch Pre-orders</h2>
-        <p className="muted">
-          Coming soon. When the website preorder checkout goes live, batch orders will land here
-          with customer details, pickup windows, and status tracking from confirmation to handoff.
-        </p>
-      </section>
-    );
+    return <PreordersDetail preorders={preorders} onBack={() => setGroup("overview")} />;
   }
 
   return (
@@ -936,27 +979,170 @@ function OrdersView({ pos, products }: { pos: PosState; products: MenuProduct[] 
         <div className="order-group-head">
           <CalendarDays size={24} />
           <h2>Batch Pre-orders</h2>
-          <span className="status-badge product-status-sold_out">Coming soon</span>
+          <span className="status-badge product-status-active">Live</span>
         </div>
-        <div className="order-group-stats">
-          <div>
-            <span>Open orders</span>
-            <strong>0</strong>
+        {preorders.loading ? (
+          <p className="muted">Loading pre-orders…</p>
+        ) : preorders.error ? (
+          <p className="muted">Pre-orders unavailable: {preorders.error}</p>
+        ) : (
+          <div className="order-group-stats">
+            <div>
+              <span>New requests</span>
+              <strong>{newRequests.length}</strong>
+            </div>
+            <div>
+              <span>Open orders</span>
+              <strong>{openOrders.length}</strong>
+            </div>
+            <div>
+              <span>All time</span>
+              <strong>{preorders.orders.length}</strong>
+            </div>
+            <div>
+              <span>Latest request</span>
+              <strong>
+                {preorders.orders[0]
+                  ? formatBusinessDateTime(preorders.orders[0].createdAtUtc)
+                  : "—"}
+              </strong>
+            </div>
           </div>
-          <div>
-            <span>Committed batches</span>
-            <strong>0</strong>
-          </div>
-        </div>
-        <p className="muted">
-          Website preorder checkout isn't live yet. Half-dozen and dozen batch orders will be
-          confirmed and tracked here.
-        </p>
+        )}
         <span className="order-group-cta">
-          Preview
+          Manage pre-orders
           <ChevronRight size={18} />
         </span>
       </button>
+    </section>
+  );
+}
+
+function PreordersDetail({
+  preorders,
+  onBack
+}: {
+  preorders: { orders: OrderRecord[]; loading: boolean; error: string | null };
+  onBack: () => void;
+}) {
+  const [actionError, setActionError] = useState("");
+  const openCount = preorders.orders.filter((order) =>
+    openOrderStatuses.includes(order.status)
+  ).length;
+
+  async function transition(order: OrderRecord, status: OrderStatus) {
+    setActionError("");
+    try {
+      await updateOrderStatus(order.id, status);
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "The status change could not be saved."
+      );
+    }
+  }
+
+  return (
+    <section className="admin-card">
+      <div className="toolbar">
+        <button className="button button-small" type="button" onClick={onBack}>
+          <ArrowLeft size={16} />
+          All orders
+        </button>
+      </div>
+      <h2>Batch Pre-orders</h2>
+      {preorders.loading ? (
+        <p className="muted">Loading pre-orders…</p>
+      ) : preorders.error ? (
+        <p className="muted">Pre-orders unavailable: {preorders.error}</p>
+      ) : preorders.orders.length === 0 ? (
+        <p className="muted">
+          No pre-orders yet. Requests from the website order page will land here.
+        </p>
+      ) : (
+        <>
+          <div className="admin-row">
+            <span>
+              {preorders.orders.length} request{preorders.orders.length === 1 ? "" : "s"}
+            </span>
+            <strong>{openCount} open</strong>
+          </div>
+          {actionError && (
+            <p className="form-notice form-notice-error" role="alert">
+              {actionError}
+            </p>
+          )}
+          {preorders.orders.map((order) => {
+            const window = availabilityWindows.find(
+              (item) => item.id === order.availabilityWindowId
+            );
+            return (
+              <article className="receipt-card" key={order.id}>
+                <div className="receipt-head">
+                  <div>
+                    <strong>
+                      {order.customer.name} · {order.orderNumber}
+                    </strong>
+                    <span className="muted">{formatBusinessDateTime(order.createdAtUtc)}</span>
+                  </div>
+                  <span className={`status-badge status-${order.status}`}>
+                    {statusLabels[order.status]}
+                  </span>
+                </div>
+                <p className="preorder-contact">
+                  <a href={`tel:${order.customer.mobile}`}>{order.customer.mobile}</a>
+                  {" · "}
+                  <a href={`mailto:${order.customer.email}`}>{order.customer.email}</a>
+                  {" · "}prefers {order.customer.preferredContact}
+                </p>
+                {window && (
+                  <p className="muted preorder-window">
+                    {window.label} — {formatWindow(window)}
+                  </p>
+                )}
+                <div className="receipt-lines">
+                  {order.items.map((line) => (
+                    <div className="receipt-line" key={`${order.id}-${line.variantId}`}>
+                      <span>
+                        {line.quantity} × {line.productName} · {line.variantLabel}
+                      </span>
+                      <span className="muted">@ {formatMoney(line.unitPriceCents)}</span>
+                      <strong>{formatMoney(line.lineTotalCents)}</strong>
+                    </div>
+                  ))}
+                </div>
+                {order.bulk.enabled && (
+                  <p className="muted">
+                    Bulk order — {order.bulk.guestCount || "?"} guests
+                    {order.bulk.occasion ? ` · ${order.bulk.occasion}` : ""}
+                    {order.bulk.desiredReadyTime ? ` · ready by ${order.bulk.desiredReadyTime}` : ""}
+                  </p>
+                )}
+                {order.customer.notes && <p className="muted">Note: {order.customer.notes}</p>}
+                <div className="receipt-totals">
+                  <div className="receipt-grand">
+                    <span>Estimated total</span>
+                    <strong>{formatMoney(order.totals.totalCents)}</strong>
+                  </div>
+                </div>
+                <div className="button-row">
+                  {(["confirmed", "preparing", "ready", "completed", "canceled"] as OrderStatus[])
+                    .filter((status) => canTransitionOrder(order.status, status))
+                    .map((status) => (
+                      <button
+                        key={status}
+                        className="button button-small"
+                        type="button"
+                        onClick={() => void transition(order, status)}
+                      >
+                        {statusLabels[status]}
+                      </button>
+                    ))}
+                </div>
+              </article>
+            );
+          })}
+        </>
+      )}
     </section>
   );
 }
@@ -1039,7 +1225,10 @@ function PosOrdersDetail({
               >
                 <div className="receipt-head">
                   <div>
-                    <strong>{ticket.ticketNumber}</strong>
+                    <strong>
+                      {ticket.customerName ? `${ticket.customerName} · ` : ""}
+                      {ticket.ticketNumber}
+                    </strong>
                     <span className="muted">{formatBusinessDateTime(ticket.createdAtUtc)}</span>
                   </div>
                   <span className="price-chip">
@@ -1136,6 +1325,7 @@ function TicketEditor({
     ticket.items.map((item) => ({ ...item }))
   );
   const [method, setMethod] = useState<PaymentMethod>(ticket.paymentMethod);
+  const [customerName, setCustomerName] = useState(ticket.customerName);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const subtotalCents = items.reduce((sum, item) => sum + item.quantity * item.unitPriceCents, 0);
@@ -1183,7 +1373,8 @@ function TicketEditor({
         subtotalCents,
         taxCents,
         totalCents,
-        paymentMethod: method
+        paymentMethod: method,
+        customerName: customerName.trim()
       });
       onClose();
     } catch (err) {
@@ -1251,6 +1442,16 @@ function TicketEditor({
             </option>
           ))}
         </select>
+      </label>
+      <label className="ticket-edit-add">
+        Name for the order
+        <input
+          type="text"
+          value={customerName}
+          autoComplete="off"
+          placeholder="e.g. Maria"
+          onChange={(event) => setCustomerName(event.target.value)}
+        />
       </label>
       <div className="receipt-totals">
         <div>
@@ -2368,9 +2569,10 @@ function ReportsView({ pos }: { pos: PosState }) {
   const usesPeriod = tab === "income" || tab === "tax" || tab === "expenses";
 
   function exportRawSalesCsv() {
-    const header = ["Ticket", "Date", "Payment", "Items", "Net Sale", "Tax", "Total"];
+    const header = ["Ticket", "Name", "Date", "Payment", "Items", "Net Sale", "Tax", "Total"];
     const rows = periodTickets.map((ticket) => [
       ticket.ticketNumber,
+      ticket.customerName,
       formatBusinessDateTime(ticket.createdAtUtc),
       paymentLabels[ticket.paymentMethod],
       ticket.items.map((item) => `${item.quantity}x ${item.productName}`).join("; "),
