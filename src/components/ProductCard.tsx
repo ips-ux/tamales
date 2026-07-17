@@ -20,6 +20,7 @@ export function ProductCard({ product, quantities, onQuantityChange }: ProductCa
           {product.spiceLevel === "mild" ? <Leaf size={15} /> : <Flame size={15} />}
           {product.spiceLevel}
         </span>
+        {isSoldOut && <span className="status-badge product-status-sold_out">Sold Out</span>}
       </div>
       <div className="product-body">
         <div>
@@ -50,6 +51,7 @@ export function ProductCard({ product, quantities, onQuantityChange }: ProductCa
                 value={quantities[variant.id] ?? 0}
                 onChange={(value) => onQuantityChange(variant.id, value)}
                 max={24}
+                disabled={isSoldOut}
               />
             </div>
           ))}

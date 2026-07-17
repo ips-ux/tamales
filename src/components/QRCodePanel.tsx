@@ -35,9 +35,7 @@ export function QRCodePanel({ url, eventName, title = "Scan to Order", alt }: QR
     <div className={fullScreen ? "qr-panel qr-panel-fullscreen" : "qr-panel"}>
       <div className="qr-header">
         <div className="brand-lockup">
-          <span className="brand-mark" aria-hidden="true">
-            BB
-          </span>
+          <img className="brand-logo" src="/media/logo1.webp" alt="" />
           <span>
             <strong>{title}</strong>
             <small>{eventName}</small>

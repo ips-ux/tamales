@@ -11,10 +11,12 @@ import {
   userIsAdmin,
   watchAuth
 } from "../lib/firebaseClient";
+import { clearMustChangePassword, fetchMustChangePassword } from "../lib/firestoreClient";
 
 export function LoginPage() {
   const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [mustChangePassword, setMustChangePassword] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -23,11 +25,27 @@ export function LoginPage() {
       setUser(nextUser);
       if (!nextUser) {
         setIsAdmin(false);
+        setMustChangePassword(false);
         return;
       }
       userIsAdmin(nextUser)
-        .then(setIsAdmin)
-        .catch(() => setIsAdmin(false));
+        .then((admin) => {
+          setIsAdmin(admin);
+          if (!admin) {
+            setMustChangePassword(false);
+            return;
+          }
+          // Owner-provisioned employee accounts start with a temporary
+          // password and this flag; it only shows the change-password form
+          // until they set their own, then stays cleared for every login after.
+          fetchMustChangePassword(nextUser.uid)
+            .then(setMustChangePassword)
+            .catch(() => setMustChangePassword(false));
+        })
+        .catch(() => {
+          setIsAdmin(false);
+          setMustChangePassword(false);
+        });
     });
   }, []);
 
@@ -121,8 +139,20 @@ export function LoginPage() {
                 <ArrowRight size={18} />
               </button>
             )}
-            <h3>Change password</h3>
-            <ChangePasswordForm />
+            {mustChangePassword && (
+              <>
+                <h3>Change password</h3>
+                <p className="form-notice" role="status">
+                  You&rsquo;re signed in with a temporary password. Set a new one to continue.
+                </p>
+                <ChangePasswordForm
+                  onSuccess={() => {
+                    setMustChangePassword(false);
+                    if (user) void clearMustChangePassword(user.uid);
+                  }}
+                />
+              </>
+            )}
             <button className="button button-ghost" type="button" onClick={handleSignOut}>
               Sign Out
             </button>

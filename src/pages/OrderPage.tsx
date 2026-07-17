@@ -1,19 +1,26 @@
 import { ArrowLeft, ArrowRight, Check, CircleAlert } from "lucide-react";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { navigate } from "../App";
 import { OrderSummary } from "../components/OrderSummary";
 import { ProductCard } from "../components/ProductCard";
-import {
-  availabilityWindows,
-  pickupLocations
-} from "../data/fixtures";
+import { useAvailabilityWindows, usePickupLocations } from "../lib/availabilityStore";
 import { useBusinessSettings } from "../lib/businessSettings";
 import { receiptEmailConfigured, sendReceiptEmail } from "../lib/emailReceipt";
 import { submitPublicOrder } from "../lib/firestoreClient";
 import { useMenuProducts } from "../lib/menuStore";
 import { formatMoney } from "../lib/money";
-import { createLocalOrderRecord, generateIdempotencyKey, orderItemCount } from "../lib/order";
-import { formatBusinessDateTime, formatWindow, isWindowSelectable } from "../lib/time";
+import {
+  createLocalOrderRecord,
+  generateIdempotencyKey,
+  isPreorderable,
+  orderItemCount
+} from "../lib/order";
+import {
+  formatBusinessDateTime,
+  formatWindow,
+  isWindowSelectable,
+  nextAvailableWindows
+} from "../lib/time";
 import type {
   BulkOrderInfo,
   CartSelection,
@@ -58,18 +65,24 @@ function quantityMapToSelections(
 export function OrderPage() {
   const businessSettings = useBusinessSettings();
   const menuProducts = useMenuProducts();
+  const availabilityWindows = useAvailabilityWindows();
+  const pickupLocations = usePickupLocations();
   const [step, setStep] = useState(0);
   const [fulfillmentType, setFulfillmentType] = useState<FulfillmentType>("scheduled_pickup");
-  const [windowId, setWindowId] = useState("sat-morning-westminster");
+  const [windowId, setWindowId] = useState("");
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [customer, setCustomer] = useState<CustomerInfo>(emptyCustomer);
   const [bulk, setBulk] = useState<BulkOrderInfo>(emptyBulk);
   const [errors, setErrors] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
+  const preorderProducts = useMemo(
+    () => menuProducts.filter((product) => isPreorderable(product)),
+    [menuProducts]
+  );
   const selections = useMemo(
-    () => quantityMapToSelections(quantities, menuProducts),
-    [quantities, menuProducts]
+    () => quantityMapToSelections(quantities, preorderProducts),
+    [quantities, preorderProducts]
   );
   const activeSelections = useMemo(
     () => selections.filter((selection) => selection.quantity > 0),
@@ -78,14 +91,31 @@ export function OrderPage() {
   const visibleWindows = availabilityWindows.filter(
     (window) => window.fulfillmentType === fulfillmentType
   );
+  const bookableWindows = visibleWindows.filter((window) => isWindowSelectable(window));
+  const upcomingWindows = nextAvailableWindows(availabilityWindows, fulfillmentType, 3);
   const selectedWindow = availabilityWindows.find((window) => window.id === windowId);
   const selectedLocation = selectedWindow
     ? pickupLocations.find((location) => location.id === selectedWindow.locationId)
     : undefined;
 
+  // Keep the selection pointed at a real, bookable window instead of a
+  // hardcoded id — it auto-picks the soonest one for the current fulfillment
+  // type whenever that type changes or the live window list updates, and
+  // otherwise leaves the customer's own choice alone.
+  useEffect(() => {
+    const candidates = availabilityWindows.filter(
+      (window) => window.fulfillmentType === fulfillmentType && isWindowSelectable(window)
+    );
+    if (candidates.some((window) => window.id === windowId)) return;
+    setWindowId(candidates[0]?.id ?? "");
+  }, [availabilityWindows, fulfillmentType, windowId]);
+
   function validate(nextStep = step): string[] {
     const nextErrors: string[] = [];
-    if (nextStep >= 1 && (!selectedWindow || !isWindowSelectable(selectedWindow))) {
+    // Gates entry to Products (step 2), the same way the checks below gate
+    // entry to the step after the one that fulfills them — so choosing a
+    // window is required to leave the Time step, not to reach it.
+    if (nextStep >= 2 && (!selectedWindow || !isWindowSelectable(selectedWindow))) {
       nextErrors.push("Choose an available pickup window.");
     }
     if (nextStep >= 3 && orderItemCount(activeSelections) === 0) {
@@ -209,10 +239,7 @@ export function OrderPage() {
                   type="radio"
                   name="fulfillment"
                   checked={fulfillmentType === "scheduled_pickup"}
-                  onChange={() => {
-                    setFulfillmentType("scheduled_pickup");
-                    setWindowId("sat-morning-westminster");
-                  }}
+                  onChange={() => setFulfillmentType("scheduled_pickup")}
                 />
                 <span>
                   <strong>Scheduled pickup</strong>
@@ -224,10 +251,7 @@ export function OrderPage() {
                   type="radio"
                   name="fulfillment"
                   checked={fulfillmentType === "event_pickup"}
-                  onChange={() => {
-                    setFulfillmentType("event_pickup");
-                    setWindowId("sun-event-northglenn");
-                  }}
+                  onChange={() => setFulfillmentType("event_pickup")}
                 />
                 <span>
                   <strong>Event or pop-up pickup</strong>
@@ -237,7 +261,28 @@ export function OrderPage() {
             </fieldset>
           )}
 
-          {step === 1 && (
+          {step === 1 && bookableWindows.length === 0 && (
+            <div className="choice-grid">
+              <p className="muted">
+                We're not currently taking new requests for this option.
+                {upcomingWindows.length > 0
+                  ? " Here are the next openings — check back once one is up:"
+                  : " Check back soon for upcoming pickup windows."}
+              </p>
+              {upcomingWindows.map((window) => {
+                const location = pickupLocations.find((item) => item.id === window.locationId);
+                return (
+                  <article className="choice-disabled" key={window.id}>
+                    <strong>{window.label}</strong>
+                    <small>{formatWindow(window)}</small>
+                    <small>{location?.name}</small>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+
+          {step === 1 && bookableWindows.length > 0 && (
             <fieldset className="choice-grid">
               <legend>Choose a pickup window</legend>
               {visibleWindows.map((window) => {
@@ -265,7 +310,7 @@ export function OrderPage() {
 
           {step === 2 && (
             <div className="product-grid">
-              {menuProducts.map((product) => (
+              {preorderProducts.map((product) => (
                 <ProductCard
                   key={product.id}
                   product={product}
@@ -291,17 +336,21 @@ export function OrderPage() {
               <label>
                 Mobile number
                 <input
+                  type="tel"
                   value={customer.mobile}
                   onChange={(event) => setCustomer({ ...customer, mobile: event.target.value })}
                   autoComplete="tel"
+                  required
                 />
               </label>
               <label>
                 Email
                 <input
+                  type="email"
                   value={customer.email}
                   onChange={(event) => setCustomer({ ...customer, email: event.target.value })}
                   autoComplete="email"
+                  required
                 />
               </label>
               <label>

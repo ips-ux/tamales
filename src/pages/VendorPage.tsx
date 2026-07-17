@@ -41,11 +41,11 @@ export function VendorPage({ sessionToken }: { sessionToken: string }) {
     <main className="vendor-shell">
       <section className="vendor-hero">
         <div className="brand-lockup vendor-brand">
-          <span className="brand-mark" aria-hidden="true">
-            BB
+          <span className="brand-chip" aria-hidden="true">
+            <img src="/media/logo1.webp" alt="" />
           </span>
           <span>
-            <strong>Bangin Bustos</strong>
+            <strong className="sr-only">Bangin Bustos</strong>
             <small>{session.name}</small>
           </span>
         </div>

@@ -9,6 +9,7 @@ import {
   FlaskConical,
   KeyRound,
   Mail,
+  MapPin,
   Package,
   Pencil,
   Plus,
@@ -20,15 +21,17 @@ import {
   X
 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
+import { navigate } from "../App";
 import { ChangePasswordForm } from "../components/ChangePasswordForm";
 import { ImagePicker } from "../components/ImagePicker";
 import { QRCodePanel } from "../components/QRCodePanel";
+import { useAvailabilityWindows, usePickupLocations } from "../lib/availabilityStore";
 import {
-  availabilityWindows,
   contactSubmissions,
   menuProducts,
+  availabilityWindows as starterAvailabilityWindows,
   paymentSettings as initialPaymentSettings,
-  pickupLocations,
+  pickupLocations as starterPickupLocations,
   vendorSessions
 } from "../data/fixtures";
 import { useBusinessSettings } from "../lib/businessSettings";
@@ -39,17 +42,23 @@ import {
   addReceiptContact,
   adjustInventory,
   deleteAllTestTickets,
+  deleteAvailabilityWindow,
   deleteExpense,
   deleteMenuItem,
+  deletePickupLocation,
   deletePosTicket,
   reportingDefaults,
+  saveAvailabilityWindow,
   saveBusinessSettings,
   saveMenuItem,
   savePaymentSettings,
+  savePickupLocation,
   savePosTicket,
   saveReportingSettings,
   saveTestMode,
+  seedAvailabilityWindowsIfEmpty,
   seedMenuItemsIfEmpty,
+  seedPickupLocationsIfEmpty,
   setPosTicketStatus,
   updateOrderStatus,
   updatePosTicket,
@@ -90,13 +99,22 @@ import {
   type Period,
   type PeriodId
 } from "../lib/reports";
-import { businessDateKey, businessTodayKey, formatBusinessDateTime, formatWindow } from "../lib/time";
+import {
+  businessDateKey,
+  businessTodayKey,
+  formatBusinessDateTime,
+  formatWindow,
+  isWindowSelectable
+} from "../lib/time";
 import type {
+  AvailabilityWindow,
+  FulfillmentType,
   MenuProduct,
   MenuVariant,
   OrderRecord,
   OrderStatus,
   PaymentSettings,
+  PickupLocation,
   PosTicketItem,
   ProductStatus,
   SpiceLevel
@@ -134,6 +152,7 @@ const paymentLabels: Record<PaymentMethod, string> = {
 
 function adminTitle(path: string) {
   if (path.includes("/pos")) return "Live POS";
+  if (path.includes("/preorders")) return "Pre-Orders";
   if (path.includes("/orders")) return "Orders";
   if (path.includes("/menu")) return "Menu";
   if (path.includes("/availability")) return "Availability";
@@ -195,11 +214,19 @@ export function AdminPage({ path }: AdminPageProps) {
   const [testMode, setTestMode] = useState(false);
   const rawPos = usePosTickets();
   const title = adminTitle(path);
+  const isPosMode = title === "Live POS" || title === "Orders";
 
   // First admin visit with an empty menu collection: copy the starter menu in
   // so edits from then on persist to Firestore instead of reverting.
   useEffect(() => {
     seedMenuItemsIfEmpty(menuProducts).catch(() => undefined);
+  }, []);
+
+  // Same one-time seed for the availability windows and pickup locations
+  // collections, which were fixture-only before this feature.
+  useEffect(() => {
+    seedAvailabilityWindowsIfEmpty(starterAvailabilityWindows).catch(() => undefined);
+    seedPickupLocationsIfEmpty(starterPickupLocations).catch(() => undefined);
   }, []);
 
   // Payment accounts live in settings/payments; fixture values are only the
@@ -254,7 +281,7 @@ export function AdminPage({ path }: AdminPageProps) {
   return (
     <main className="admin-shell">
       <section className="admin-heading">
-        <p className="eyebrow">Owner Area</p>
+        <p className="eyebrow">{isPosMode ? "Live POS Mode" : "Owner Area"}</p>
         <h1>{title}</h1>
       </section>
 
@@ -282,6 +309,7 @@ export function AdminPage({ path }: AdminPageProps) {
 
       {title === "Dashboard" && <Dashboard pos={pos} products={products} />}
       {title === "Live POS" && <PosView products={products} payments={payments} testMode={testMode} />}
+      {title === "Pre-Orders" && <PreordersTopLevelView />}
       {title === "Orders" && <OrdersView pos={pos} products={products} />}
       {title === "Menu" && <MenuView products={products} />}
       {title === "Availability" && <AvailabilityView />}
@@ -1018,6 +1046,11 @@ function OrdersView({ pos, products }: { pos: PosState; products: MenuProduct[] 
   );
 }
 
+function PreordersTopLevelView() {
+  const preorders = useOrders();
+  return <PreordersDetail preorders={preorders} onBack={() => navigate("/admin/orders")} />;
+}
+
 function PreordersDetail({
   preorders,
   onBack
@@ -1026,11 +1059,17 @@ function PreordersDetail({
   onBack: () => void;
 }) {
   const [actionError, setActionError] = useState("");
+  const [rejectingOrder, setRejectingOrder] = useState<OrderRecord | null>(null);
+  const availabilityWindows = useAvailabilityWindows();
   const openCount = preorders.orders.filter((order) =>
     openOrderStatuses.includes(order.status)
   ).length;
 
   async function transition(order: OrderRecord, status: OrderStatus) {
+    if (status === "canceled") {
+      setRejectingOrder(order);
+      return;
+    }
     setActionError("");
     try {
       await updateOrderStatus(order.id, status);
@@ -1041,7 +1080,20 @@ function PreordersDetail({
     }
   }
 
+  async function confirmReject(order: OrderRecord) {
+    setActionError("");
+    try {
+      await updateOrderStatus(order.id, "canceled");
+      setRejectingOrder(null);
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "The status change could not be saved."
+      );
+    }
+  }
+
   return (
+    <>
     <section className="admin-card">
       <div className="toolbar">
         <button className="button button-small" type="button" onClick={onBack}>
@@ -1134,7 +1186,7 @@ function PreordersDetail({
                         type="button"
                         onClick={() => void transition(order, status)}
                       >
-                        {statusLabels[status]}
+                        {status === "canceled" ? "Reject" : statusLabels[status]}
                       </button>
                     ))}
                 </div>
@@ -1144,6 +1196,47 @@ function PreordersDetail({
         </>
       )}
     </section>
+    {rejectingOrder && (
+      <div className="modal-overlay">
+        <div className="admin-card modal-card" role="dialog" aria-label="Confirm rejection">
+          <h2>Reject {rejectingOrder.orderNumber}?</h2>
+          <p className="muted">
+            Reach out to {rejectingOrder.customer.name} before rejecting — they prefer{" "}
+            {rejectingOrder.customer.preferredContact}.
+          </p>
+          <div className="button-row">
+            <a className="button button-small" href={`tel:${rejectingOrder.customer.mobile}`}>
+              Call {rejectingOrder.customer.mobile}
+            </a>
+            <a className="button button-small" href={`mailto:${rejectingOrder.customer.email}`}>
+              Email {rejectingOrder.customer.email}
+            </a>
+          </div>
+          {actionError && (
+            <p className="form-notice form-notice-error" role="alert">
+              {actionError}
+            </p>
+          )}
+          <div className="button-row">
+            <button
+              className="button button-primary"
+              type="button"
+              onClick={() => void confirmReject(rejectingOrder)}
+            >
+              Confirm Rejection
+            </button>
+            <button
+              className="button button-ghost"
+              type="button"
+              onClick={() => setRejectingOrder(null)}
+            >
+              Go Back
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
@@ -1507,6 +1600,23 @@ function centsToInput(cents: number | undefined): string {
   return cents && cents > 0 ? (cents / 100).toFixed(2) : "";
 }
 
+// datetime-local inputs read/write the browser's local time with no
+// timezone offset in the string, so these convert to/from the UTC ISO
+// strings AvailabilityWindow stores.
+function toDatetimeLocalValue(iso: string | undefined): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const localMs = date.getTime() - date.getTimezoneOffset() * 60000;
+  return new Date(localMs).toISOString().slice(0, 16);
+}
+
+function toIsoFromLocal(value: FormDataEntryValue | null): string {
+  if (!value) return "";
+  const date = new Date(String(value));
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
 function MenuView({ products }: { products: MenuProduct[] }) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1830,22 +1940,428 @@ function ProductForm({
 
 function AvailabilityView() {
   return (
-    <section className="admin-grid">
-      {availabilityWindows.map((window) => {
-        const location = pickupLocations.find((item) => item.id === window.locationId);
-        return (
-          <article className="admin-card" key={window.id}>
-            <CalendarDays size={24} />
-            <h2>{window.label}</h2>
-            <p>{formatWindow(window)}</p>
-            <div className="admin-row">
-              <span>{location?.name}</span>
-              <strong>{window.capacity - window.committedOrders} open</strong>
-            </div>
-            <p>{window.instructions}</p>
-          </article>
-        );
-      })}
+    <section className="menu-manager">
+      <PickupLocationsManager />
+      <AvailabilityWindowsManager />
+    </section>
+  );
+}
+
+function PickupLocationForm({
+  location,
+  onSave,
+  onCancel
+}: {
+  location?: PickupLocation;
+  onSave: (location: PickupLocation) => void;
+  onCancel: () => void;
+}) {
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const name = String(form.get("name") ?? "").trim();
+    if (!name) return;
+    onSave({
+      id: location?.id ?? `location-${slugify(name)}-${Date.now()}`,
+      name,
+      address: String(form.get("address") ?? "").trim(),
+      instructions: String(form.get("instructions") ?? "").trim(),
+      active: form.get("active") === "on"
+    });
+  }
+
+  return (
+    <form className="admin-card" onSubmit={handleSubmit}>
+      <h3>{location ? `Edit ${location.name}` : "Add Pickup Location"}</h3>
+      <div className="form-grid">
+        <label className="full-span">
+          Name
+          <input name="name" defaultValue={location?.name ?? ""} required />
+        </label>
+        <label className="full-span">
+          Address / area
+          <input name="address" defaultValue={location?.address ?? ""} />
+        </label>
+        <label className="full-span">
+          Pickup instructions
+          <textarea name="instructions" rows={2} defaultValue={location?.instructions ?? ""} />
+        </label>
+        <label className="toggle-row full-span">
+          <input name="active" type="checkbox" defaultChecked={location?.active ?? true} />
+          <span>Active</span>
+        </label>
+        <div className="button-row full-span">
+          <button className="button button-primary" type="submit">
+            {location ? "Save Changes" : "Add Location"}
+          </button>
+          <button className="button button-ghost" type="button" onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </form>
+  );
+}
+
+function PickupLocationsManager() {
+  const locations = usePickupLocations();
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [error, setError] = useState("");
+
+  async function persist(action: () => Promise<void>) {
+    setError("");
+    try {
+      await action();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save the location.");
+    }
+  }
+
+  function addLocation(location: PickupLocation) {
+    void persist(() => savePickupLocation(location));
+    setAdding(false);
+  }
+
+  function saveLocation(location: PickupLocation) {
+    void persist(() => savePickupLocation(location));
+    setEditingId(null);
+  }
+
+  function removeLocation(entry: PickupLocation) {
+    if (!window.confirm(`Remove ${entry.name}? This is permanent.`)) return;
+    void persist(() => deletePickupLocation(entry.id));
+  }
+
+  return (
+    <section className="menu-manager">
+      <div className="menu-toolbar">
+        <p className="muted">
+          {locations.length} pickup location{locations.length === 1 ? "" : "s"}
+        </p>
+        <button
+          className={`button ${adding ? "button-ghost" : "button-primary"}`}
+          type="button"
+          onClick={() => {
+            setAdding((current) => !current);
+            setEditingId(null);
+          }}
+        >
+          <Plus size={18} />
+          {adding ? "Close" : "Add Location"}
+        </button>
+      </div>
+      {error && (
+        <p className="form-notice form-notice-error" role="alert">
+          {error}
+        </p>
+      )}
+      {adding && <PickupLocationForm onSave={addLocation} onCancel={() => setAdding(false)} />}
+      <div className="menu-grid">
+        {locations.map((location) =>
+          editingId === location.id ? (
+            <PickupLocationForm
+              key={location.id}
+              location={location}
+              onSave={saveLocation}
+              onCancel={() => setEditingId(null)}
+            />
+          ) : (
+            <article className="admin-card" key={location.id}>
+              <MapPin size={22} />
+              <h3>{location.name}</h3>
+              <span
+                className={`status-badge product-status-${location.active ? "active" : "inactive"}`}
+              >
+                {location.active ? "Active" : "Inactive"}
+              </span>
+              {location.address && <p className="muted">{location.address}</p>}
+              {location.instructions && <p className="muted">{location.instructions}</p>}
+              <div className="button-row">
+                <button
+                  className="button button-small"
+                  type="button"
+                  onClick={() => {
+                    setEditingId(location.id);
+                    setAdding(false);
+                  }}
+                >
+                  <Pencil size={16} />
+                  Edit
+                </button>
+                <button
+                  className="button button-small"
+                  type="button"
+                  onClick={() => removeLocation(location)}
+                >
+                  <Trash2 size={16} />
+                  Remove
+                </button>
+              </div>
+            </article>
+          )
+        )}
+        {locations.length === 0 && <p className="muted">No pickup locations yet.</p>}
+      </div>
+    </section>
+  );
+}
+
+const fulfillmentTypeLabels: Record<FulfillmentType, string> = {
+  scheduled_pickup: "Scheduled Pickup",
+  event_pickup: "Event / Pop-up Pickup"
+};
+
+function AvailabilityWindowForm({
+  windowRecord,
+  locations,
+  onSave,
+  onCancel
+}: {
+  windowRecord?: AvailabilityWindow;
+  locations: PickupLocation[];
+  onSave: (window: AvailabilityWindow) => void;
+  onCancel: () => void;
+}) {
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const label = String(form.get("label") ?? "").trim();
+    if (!label) return;
+    onSave({
+      id: windowRecord?.id ?? `window-${slugify(label)}-${Date.now()}`,
+      locationId: String(form.get("locationId") ?? ""),
+      label,
+      fulfillmentType: (form.get("fulfillmentType") as FulfillmentType) || "scheduled_pickup",
+      startsAtUtc: toIsoFromLocal(form.get("startsAtUtc")),
+      endsAtUtc: toIsoFromLocal(form.get("endsAtUtc")),
+      cutoffAtUtc: toIsoFromLocal(form.get("cutoffAtUtc")),
+      capacity: Math.max(0, Math.round(Number(form.get("capacity") ?? 0))),
+      committedOrders: windowRecord?.committedOrders ?? 0,
+      active: form.get("active") === "on",
+      preordersEnabled: form.get("preordersEnabled") === "on",
+      instructions: String(form.get("instructions") ?? "").trim(),
+      vendorSessionId: windowRecord?.vendorSessionId
+    });
+  }
+
+  return (
+    <form className="admin-card" onSubmit={handleSubmit}>
+      <h3>{windowRecord ? `Edit ${windowRecord.label}` : "Add Pop-Up Event"}</h3>
+      <div className="form-grid">
+        <label className="full-span">
+          Label
+          <input name="label" defaultValue={windowRecord?.label ?? ""} required />
+        </label>
+        <label>
+          Fulfillment type
+          <select
+            name="fulfillmentType"
+            defaultValue={windowRecord?.fulfillmentType ?? "scheduled_pickup"}
+          >
+            {(Object.keys(fulfillmentTypeLabels) as FulfillmentType[]).map((type) => (
+              <option key={type} value={type}>
+                {fulfillmentTypeLabels[type]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Location
+          <select name="locationId" defaultValue={windowRecord?.locationId ?? ""}>
+            <option value="">— Select a location —</option>
+            {locations.map((location) => (
+              <option key={location.id} value={location.id}>
+                {location.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Starts
+          <input
+            name="startsAtUtc"
+            type="datetime-local"
+            defaultValue={toDatetimeLocalValue(windowRecord?.startsAtUtc)}
+            required
+          />
+        </label>
+        <label>
+          Ends
+          <input
+            name="endsAtUtc"
+            type="datetime-local"
+            defaultValue={toDatetimeLocalValue(windowRecord?.endsAtUtc)}
+            required
+          />
+        </label>
+        <label>
+          Order cutoff
+          <input
+            name="cutoffAtUtc"
+            type="datetime-local"
+            defaultValue={toDatetimeLocalValue(windowRecord?.cutoffAtUtc)}
+            required
+          />
+        </label>
+        <label>
+          Capacity
+          <input name="capacity" type="number" min="0" defaultValue={windowRecord?.capacity ?? 0} />
+        </label>
+        <label className="full-span">
+          Pickup instructions
+          <textarea name="instructions" rows={2} defaultValue={windowRecord?.instructions ?? ""} />
+        </label>
+        <label className="toggle-row full-span">
+          <input name="active" type="checkbox" defaultChecked={windowRecord?.active ?? true} />
+          <span>Active — visible to customers</span>
+        </label>
+        <label className="toggle-row full-span">
+          <input
+            name="preordersEnabled"
+            type="checkbox"
+            defaultChecked={windowRecord?.preordersEnabled ?? true}
+          />
+          <span>Accepting pre-orders for this event (pre-orders always close the day of)</span>
+        </label>
+        <div className="button-row full-span">
+          <button className="button button-primary" type="submit">
+            {windowRecord ? "Save Changes" : "Add Event"}
+          </button>
+          <button className="button button-ghost" type="button" onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </form>
+  );
+}
+
+function AvailabilityWindowsManager() {
+  const windows = useAvailabilityWindows();
+  const locations = usePickupLocations();
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [error, setError] = useState("");
+
+  const sortedWindows = [...windows].sort(
+    (a, b) => new Date(a.startsAtUtc).getTime() - new Date(b.startsAtUtc).getTime()
+  );
+
+  async function persist(action: () => Promise<void>) {
+    setError("");
+    try {
+      await action();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save the event.");
+    }
+  }
+
+  function addWindow(windowRecord: AvailabilityWindow) {
+    void persist(() => saveAvailabilityWindow(windowRecord));
+    setAdding(false);
+  }
+
+  function saveWindow(windowRecord: AvailabilityWindow) {
+    void persist(() => saveAvailabilityWindow(windowRecord));
+    setEditingId(null);
+  }
+
+  function removeWindow(entry: AvailabilityWindow) {
+    if (!window.confirm(`Remove ${entry.label}? This is permanent.`)) return;
+    void persist(() => deleteAvailabilityWindow(entry.id));
+  }
+
+  function togglePreorders(entry: AvailabilityWindow) {
+    void persist(() => saveAvailabilityWindow({ ...entry, preordersEnabled: !entry.preordersEnabled }));
+  }
+
+  return (
+    <section className="menu-manager">
+      <div className="menu-toolbar">
+        <p className="muted">
+          {windows.length} pop-up event{windows.length === 1 ? "" : "s"}
+        </p>
+        <button
+          className={`button ${adding ? "button-ghost" : "button-primary"}`}
+          type="button"
+          onClick={() => {
+            setAdding((current) => !current);
+            setEditingId(null);
+          }}
+        >
+          <Plus size={18} />
+          {adding ? "Close" : "Add Event"}
+        </button>
+      </div>
+      {error && (
+        <p className="form-notice form-notice-error" role="alert">
+          {error}
+        </p>
+      )}
+      {adding && (
+        <AvailabilityWindowForm
+          locations={locations}
+          onSave={addWindow}
+          onCancel={() => setAdding(false)}
+        />
+      )}
+      <div className="admin-grid">
+        {sortedWindows.map((entry) => {
+          const location = locations.find((item) => item.id === entry.locationId);
+          const bookable = isWindowSelectable(entry);
+          return editingId === entry.id ? (
+            <AvailabilityWindowForm
+              key={entry.id}
+              windowRecord={entry}
+              locations={locations}
+              onSave={saveWindow}
+              onCancel={() => setEditingId(null)}
+            />
+          ) : (
+            <article className="admin-card" key={entry.id}>
+              <CalendarDays size={24} />
+              <h2>{entry.label}</h2>
+              <span className={`status-badge product-status-${bookable ? "active" : "inactive"}`}>
+                {bookable ? "Accepting Pre-Orders" : "In-Person Only"}
+              </span>
+              <p>{formatWindow(entry)}</p>
+              <p className="muted">{fulfillmentTypeLabels[entry.fulfillmentType]}</p>
+              <div className="admin-row">
+                <span>{location?.name ?? "No location set"}</span>
+                <strong>{Math.max(0, entry.capacity - entry.committedOrders)} open</strong>
+              </div>
+              {entry.instructions && <p>{entry.instructions}</p>}
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={entry.preordersEnabled}
+                  onChange={() => togglePreorders(entry)}
+                />
+                <span>Accepting pre-orders for this event</span>
+              </label>
+              <div className="button-row">
+                <button
+                  className="button button-small"
+                  type="button"
+                  onClick={() => {
+                    setEditingId(entry.id);
+                    setAdding(false);
+                  }}
+                >
+                  <Pencil size={16} />
+                  Edit
+                </button>
+                <button className="button button-small" type="button" onClick={() => removeWindow(entry)}>
+                  <Trash2 size={16} />
+                  Remove
+                </button>
+              </div>
+            </article>
+          );
+        })}
+        {windows.length === 0 && <p className="muted">No pop-up events yet.</p>}
+      </div>
     </section>
   );
 }

@@ -15,7 +15,12 @@ function friendlyError(error: unknown): string {
   return error instanceof Error ? error.message : "Could not update the password.";
 }
 
-export function ChangePasswordForm() {
+interface ChangePasswordFormProps {
+  /** Called after the password is successfully updated on the server. */
+  onSuccess?: () => void;
+}
+
+export function ChangePasswordForm({ onSuccess }: ChangePasswordFormProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
@@ -38,6 +43,7 @@ export function ChangePasswordForm() {
       await changePassword(currentPassword, newPassword);
       setSuccess(true);
       formElement.reset();
+      onSuccess?.();
     } catch (err) {
       setError(friendlyError(err));
     } finally {

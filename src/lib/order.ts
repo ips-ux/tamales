@@ -25,6 +25,15 @@ export function canTransitionOrder(from: OrderStatus, to: OrderStatus): boolean 
   return allowedStatusTransitions[from].includes(to);
 }
 
+/** Whether a product belongs on the customer preorder menu right now — the
+ * owner's "Show on preorder menu" / "Keep visible when sold out" toggles. */
+export function isPreorderable(product: MenuProduct): boolean {
+  if (!product.bulkMenuEnabled) return false;
+  if (product.status === "inactive") return false;
+  if (product.status === "sold_out" && !product.showWhenSoldOut) return false;
+  return true;
+}
+
 export function getActiveProduct(productId: string, products = menuProducts): MenuProduct {
   const product = products.find((item) => item.id === productId);
   if (!product) throw new Error("Product not found.");

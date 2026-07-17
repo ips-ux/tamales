@@ -130,6 +130,7 @@ export const availabilityWindows: AvailabilityWindow[] = [
     capacity: 28,
     committedOrders: 11,
     active: true,
+    preordersEnabled: true,
     instructions: "Orders are packed warm. Pickup details are confirmed after acceptance."
   },
   {
@@ -143,6 +144,7 @@ export const availabilityWindows: AvailabilityWindow[] = [
     capacity: 36,
     committedOrders: 18,
     active: true,
+    preordersEnabled: true,
     vendorSessionId: "northglenn-market",
     instructions: "Pick up at the Bangin Bustos table during event hours."
   }

@@ -1,7 +1,7 @@
 import { CheckCircle2, ClipboardList } from "lucide-react";
 import { useEffect, useState } from "react";
 import { navigate } from "../App";
-import { availabilityWindows, pickupLocations } from "../data/fixtures";
+import { useAvailabilityWindows, usePickupLocations } from "../lib/availabilityStore";
 import { fetchOrderByToken } from "../lib/firestoreClient";
 import { formatMoney } from "../lib/money";
 import { formatWindow } from "../lib/time";
@@ -22,6 +22,8 @@ function localCopy(publicToken: string): OrderRecord | null {
 export function ConfirmationPage({ publicToken }: { publicToken: string }) {
   const [order, setOrder] = useState<OrderRecord | null>(() => localCopy(publicToken));
   const [loading, setLoading] = useState(order === null);
+  const availabilityWindows = useAvailabilityWindows();
+  const pickupLocations = usePickupLocations();
 
   useEffect(() => {
     let active = true;

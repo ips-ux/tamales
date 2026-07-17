@@ -23,10 +23,13 @@ import {
 } from "firebase/firestore";
 import { firebaseConfigured, getCurrentUser, getFirebaseApp } from "./firebaseClient";
 import type {
+  AvailabilityWindow,
+  FulfillmentType,
   MenuProduct,
   MenuVariant,
   OrderRecord,
   OrderStatus,
+  PickupLocation,
   PosTicketItem
 } from "./types";
 
@@ -429,6 +432,152 @@ export async function deletePosTicket(ticket: PosTicketRecord): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Availability: the pickup-window ("pop-up event") and pickup-location
+// collections that back the pre-order form. These were fixture-only before
+// this feature; the fixtures in src/data/fixtures.ts now serve only as seed
+// content and an offline/unconfigured fallback, the same role the menu
+// fixture plays. There is no separate "current status" doc — the next event
+// and whether pre-orders are open for it are derived directly from these
+// windows (see isWindowSelectable/nextUpcomingEvent in lib/time.ts).
+// ---------------------------------------------------------------------------
+
+const AVAILABILITY_WINDOWS_COLLECTION = "availabilityWindows";
+
+function mapAvailabilityWindowDoc(id: string, data: Record<string, unknown>): AvailabilityWindow {
+  return {
+    id,
+    locationId: (data.locationId as string) ?? "",
+    label: (data.label as string) ?? "",
+    fulfillmentType: (data.fulfillmentType as FulfillmentType) ?? "scheduled_pickup",
+    startsAtUtc: (data.startsAtUtc as string) ?? "",
+    endsAtUtc: (data.endsAtUtc as string) ?? "",
+    cutoffAtUtc: (data.cutoffAtUtc as string) ?? "",
+    capacity: (data.capacity as number) ?? 0,
+    committedOrders: (data.committedOrders as number) ?? 0,
+    active: Boolean(data.active),
+    preordersEnabled: data.preordersEnabled === undefined ? true : Boolean(data.preordersEnabled),
+    instructions: (data.instructions as string) ?? "",
+    vendorSessionId: (data.vendorSessionId as string) || undefined
+  };
+}
+
+export function watchAvailabilityWindows(
+  onData: (windows: AvailabilityWindow[]) => void,
+  onError: (error: Error) => void
+): () => void {
+  if (!firebaseConfigured()) {
+    onError(new Error("Firebase is not configured."));
+    return () => undefined;
+  }
+  const windowsQuery = query(
+    collection(db(), AVAILABILITY_WINDOWS_COLLECTION),
+    orderBy("startsAtUtc")
+  );
+  return onSnapshot(
+    windowsQuery,
+    (snapshot) => {
+      onData(
+        snapshot.docs.map((docSnapshot) => mapAvailabilityWindowDoc(docSnapshot.id, docSnapshot.data()))
+      );
+    },
+    (error) => onError(error)
+  );
+}
+
+export async function saveAvailabilityWindow(window: AvailabilityWindow): Promise<void> {
+  if (!firebaseConfigured()) {
+    throw new Error("Firebase is not configured. Add VITE_FIREBASE values to .env.local.");
+  }
+  const { id, ...data } = window;
+  await setDoc(doc(db(), AVAILABILITY_WINDOWS_COLLECTION, id), data);
+}
+
+export async function deleteAvailabilityWindow(id: string): Promise<void> {
+  await deleteDoc(doc(db(), AVAILABILITY_WINDOWS_COLLECTION, id));
+}
+
+/** One-time migration: copies the fixture windows into Firestore the first
+ * time an admin loads the owner area with an empty collection. */
+export async function seedAvailabilityWindowsIfEmpty(
+  windows: AvailabilityWindow[]
+): Promise<boolean> {
+  if (!firebaseConfigured()) return false;
+  const database = db();
+  const existing = await getDocs(
+    query(collection(database, AVAILABILITY_WINDOWS_COLLECTION), limit(1))
+  );
+  if (!existing.empty) return false;
+  const batch = writeBatch(database);
+  for (const window of windows) {
+    const { id, ...data } = window;
+    batch.set(doc(database, AVAILABILITY_WINDOWS_COLLECTION, id), data);
+  }
+  await batch.commit();
+  return true;
+}
+
+const PICKUP_LOCATIONS_COLLECTION = "pickupLocations";
+
+function mapPickupLocationDoc(id: string, data: Record<string, unknown>): PickupLocation {
+  return {
+    id,
+    name: (data.name as string) ?? "",
+    address: (data.address as string) ?? "",
+    instructions: (data.instructions as string) ?? "",
+    active: Boolean(data.active)
+  };
+}
+
+export function watchPickupLocations(
+  onData: (locations: PickupLocation[]) => void,
+  onError: (error: Error) => void
+): () => void {
+  if (!firebaseConfigured()) {
+    onError(new Error("Firebase is not configured."));
+    return () => undefined;
+  }
+  return onSnapshot(
+    collection(db(), PICKUP_LOCATIONS_COLLECTION),
+    (snapshot) => {
+      onData(
+        snapshot.docs.map((docSnapshot) => mapPickupLocationDoc(docSnapshot.id, docSnapshot.data()))
+      );
+    },
+    (error) => onError(error)
+  );
+}
+
+export async function savePickupLocation(location: PickupLocation): Promise<void> {
+  if (!firebaseConfigured()) {
+    throw new Error("Firebase is not configured. Add VITE_FIREBASE values to .env.local.");
+  }
+  const { id, ...data } = location;
+  await setDoc(doc(db(), PICKUP_LOCATIONS_COLLECTION, id), data);
+}
+
+export async function deletePickupLocation(id: string): Promise<void> {
+  await deleteDoc(doc(db(), PICKUP_LOCATIONS_COLLECTION, id));
+}
+
+/** One-time migration: copies the fixture locations into Firestore the first
+ * time an admin loads the owner area with an empty collection. */
+export async function seedPickupLocationsIfEmpty(locations: PickupLocation[]): Promise<boolean> {
+  if (!firebaseConfigured()) return false;
+  const database = db();
+  const existing = await getDocs(
+    query(collection(database, PICKUP_LOCATIONS_COLLECTION), limit(1))
+  );
+  if (!existing.empty) return false;
+  const batch = writeBatch(database);
+  for (const location of locations) {
+    const { id, ...data } = location;
+    batch.set(doc(database, PICKUP_LOCATIONS_COLLECTION, id), data);
+  }
+  await batch.commit();
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Public pre-orders. Order requests are written by unauthenticated customers
 // as create-only documents whose id is the unguessable publicToken, so the
 // confirmation link can fetch exactly one order and nothing else. The owner
@@ -481,6 +630,24 @@ export function watchOrders(
     (snapshot) => {
       onData(snapshot.docs.map((docSnapshot) => mapOrderDoc(docSnapshot.id, docSnapshot.data())));
     },
+    (error) => onError(error)
+  );
+}
+
+// Lightweight count for the nav badge — a filtered query instead of loading
+// every order, so it's cheap to keep subscribed in SiteHeader.
+export function watchNewPreorderCount(
+  onCount: (count: number) => void,
+  onError: (error: Error) => void
+): () => void {
+  if (!firebaseConfigured()) {
+    onError(new Error("Firebase is not configured."));
+    return () => undefined;
+  }
+  const newOrdersQuery = query(collection(db(), ORDERS_COLLECTION), where("status", "==", "new"));
+  return onSnapshot(
+    newOrdersQuery,
+    (snapshot) => onCount(snapshot.size),
     (error) => onError(error)
   );
 }
@@ -936,6 +1103,26 @@ export function watchExpenses(
     },
     (error) => onError(error)
   );
+}
+
+// ---------------------------------------------------------------------------
+// Admin profiles: per-admin flags the `admin` custom claim can't carry. Today
+// the only one is mustChangePassword, set on the admins/{uid} doc when the
+// owner provisions a new employee with a temporary password; the employee's
+// first successful password change clears it.
+// ---------------------------------------------------------------------------
+
+const ADMINS_COLLECTION = "admins";
+
+export async function fetchMustChangePassword(uid: string): Promise<boolean> {
+  if (!firebaseConfigured()) return false;
+  const snapshot = await getDoc(doc(db(), ADMINS_COLLECTION, uid));
+  return Boolean(snapshot.data()?.mustChangePassword);
+}
+
+export async function clearMustChangePassword(uid: string): Promise<void> {
+  if (!firebaseConfigured()) return;
+  await setDoc(doc(db(), ADMINS_COLLECTION, uid), { mustChangePassword: false }, { merge: true });
 }
 
 function buildTicketNumber(date: Date): string {

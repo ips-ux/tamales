@@ -105,6 +105,8 @@ export interface AvailabilityWindow {
   capacity: number;
   committedOrders: number;
   active: boolean;
+  /** Owner toggle: pre-orders open for this event, vs. in-person only. */
+  preordersEnabled: boolean;
   instructions: string;
   vendorSessionId?: string;
 }

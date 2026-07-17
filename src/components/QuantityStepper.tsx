@@ -5,6 +5,7 @@ interface QuantityStepperProps {
   value: number;
   min?: number;
   max?: number;
+  disabled?: boolean;
   onChange: (value: number) => void;
 }
 
@@ -13,6 +14,7 @@ export function QuantityStepper({
   value,
   min = 0,
   max = 99,
+  disabled = false,
   onChange
 }: QuantityStepperProps) {
   return (
@@ -22,7 +24,7 @@ export function QuantityStepper({
         className="icon-button"
         aria-label={`Decrease ${label}`}
         onClick={() => onChange(Math.max(min, value - 1))}
-        disabled={value <= min}
+        disabled={disabled || value <= min}
       >
         <Minus size={17} />
       </button>
@@ -32,6 +34,7 @@ export function QuantityStepper({
         className="icon-button"
         aria-label={`Increase ${label}`}
         onClick={() => onChange(Math.min(max, value + 1))}
+        disabled={disabled}
       >
         <Plus size={17} />
       </button>

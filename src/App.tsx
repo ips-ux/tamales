@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { SiteHeader } from "./components/SiteHeader";
+import { PosModeHeader } from "./components/PosModeHeader";
 import { AdminGate } from "./components/AdminGate";
 import { AboutPage } from "./pages/AboutPage";
 import { AdminPage } from "./pages/AdminPage";
@@ -37,6 +38,7 @@ export function App() {
   const path = usePathname();
   const route = useMemo(() => path.replace(/\/+$/, "") || "/", [path]);
   const isAdmin = route.startsWith("/admin");
+  const isPosMode = route.startsWith("/admin/pos") || route.startsWith("/admin/orders");
   const isVendor = route.startsWith("/vendor/");
   const confirmationToken = route.match(/^\/order\/confirmation\/([^/]+)$/)?.[1];
   const vendorToken = route.match(/^\/vendor\/([^/]+)$/)?.[1];
@@ -60,7 +62,8 @@ export function App() {
 
   return (
     <>
-      {!isVendor && <SiteHeader isAdmin={isAdmin} />}
+      {!isVendor &&
+        (isPosMode ? <PosModeHeader path={route} /> : <SiteHeader isAdmin={isAdmin} />)}
       {page}
     </>
   );

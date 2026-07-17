@@ -1,14 +1,23 @@
 import { ArrowRight, CalendarClock, MapPin, ShieldCheck } from "lucide-react";
 import { navigate } from "../App";
-import { availabilityWindows } from "../data/fixtures";
+import { useAvailabilityWindows } from "../lib/availabilityStore";
 import { useBusinessSettings } from "../lib/businessSettings";
 import { useMenuProducts } from "../lib/menuStore";
 import { formatMoney } from "../lib/money";
-import { formatWindow } from "../lib/time";
+import {
+  formatTimeRange,
+  formatWeekday,
+  formatWindow,
+  isWindowSelectable,
+  nextUpcomingEvent
+} from "../lib/time";
 
 export function HomePage() {
   const businessSettings = useBusinessSettings();
   const menuProducts = useMenuProducts();
+  const availabilityWindows = useAvailabilityWindows();
+  const nextEvent = nextUpcomingEvent(availabilityWindows);
+  const preorderOpen = nextEvent ? isWindowSelectable(nextEvent) : false;
   return (
     <main>
       <section className="hero-section">
@@ -25,11 +34,14 @@ export function HomePage() {
             <span aria-hidden="true" />
             <p className="eyebrow">Handmade in Colorado / Small-batch preorder</p>
           </div>
-          <h1>
-            <span>Bangin</span>
-            <span>Bustos</span>
-            <span>Tamales</span>
-          </h1>
+          <h1 className="sr-only">Bangin Bustos Tamales</h1>
+          <div className="hero-logo-card">
+            <img
+              className="hero-logo-img"
+              src="/media/logosticker.webp"
+              alt="Bangin Bustos Tamales — Batch Made, Popup Fueled"
+            />
+          </div>
           <p>
             Red and green tamales built with serious masa, bold chile, and a pickup flow that
             keeps the batch organized from phone to pop-up.
@@ -49,24 +61,28 @@ export function HomePage() {
             </button>
           </div>
         </div>
-        <div className="hero-batch-badge" aria-label="Next batch">
-          <span>Next Batch</span>
-          <strong>Saturday</strong>
-          <small>10 AM - noon</small>
+        <div className="hero-batch-badge" aria-label="Next event">
+          <span>{!nextEvent ? "Next Event" : preorderOpen ? "Accepting Pre-Orders" : "In-Person Only"}</span>
+          <strong>{nextEvent ? formatWeekday(nextEvent.startsAtUtc) : "Check Back Soon"}</strong>
+          <small>{nextEvent ? formatTimeRange(nextEvent) : ""}</small>
         </div>
         <div className="hero-info-strip">
           <div>
             <CalendarClock size={19} />
             <span>
-              <strong>Pickup window</strong>
-              {formatWindow(availabilityWindows[0])}
+              <strong>Next event</strong>
+              {nextEvent ? `${nextEvent.label} — ${formatWindow(nextEvent)}` : "No events scheduled yet"}
             </span>
           </div>
           <div>
             <MapPin size={19} />
             <span>
-              <strong>Batch location</strong>
-              {availabilityWindows[0].label}
+              <strong>Pre-orders</strong>
+              {!nextEvent
+                ? "Not open yet — check back for our next event"
+                : preorderOpen
+                  ? "Open now — reserve your batch ahead of time"
+                  : "Closed for this event — come see us in person"}
             </span>
           </div>
           <div>

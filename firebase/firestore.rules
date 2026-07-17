@@ -53,6 +53,29 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Per-admin flags the `admin` custom claim can't carry (currently just
+    // mustChangePassword, set when the owner provisions a new employee with a
+    // temporary password). Owner-only, same as every other admin collection.
+    match /admins/{uid} {
+      allow read, write: if isAdmin();
+    }
+
+    // Pickup windows ("pop-up events") and pickup locations backing the
+    // pre-order form. There is no separate status doc — the customer site
+    // derives "next event" and whether pre-orders are open for it directly
+    // from these windows.
+    // Publicly readable so the customer site can show what's available;
+    // only the owner edits them from the admin Availability page.
+    match /availabilityWindows/{windowId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /pickupLocations/{locationId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     // Stock levels and the adjustment audit log. Owner-only.
     match /inventory/{productId} {
       allow read, write: if isAdmin();
@@ -98,9 +121,13 @@ service cloud.firestore {
         && request.resource.data.customer.name.size() >= 1
         && request.resource.data.customer.name.size() <= 120
         && request.resource.data.customer.email is string
+        && request.resource.data.customer.email.size() >= 5
         && request.resource.data.customer.email.size() <= 200
+        && request.resource.data.customer.email.matches('.+@.+\\..+')
         && request.resource.data.customer.mobile is string
+        && request.resource.data.customer.mobile.size() >= 7
         && request.resource.data.customer.mobile.size() <= 40
+        && request.resource.data.customer.preferredContact in ['text', 'phone', 'email']
         && request.resource.data.items is list
         && request.resource.data.items.size() >= 1
         && request.resource.data.items.size() <= 40
