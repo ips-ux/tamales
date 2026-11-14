@@ -1,7 +1,8 @@
-name: Deploy to Firebase
+name: Deploy
 
-# Builds the Vite frontend and Firebase Functions, then deploys Hosting,
-# Firestore rules/indexes, and Functions to the `bustostamale` project.
+# Tests and builds the site and the Worker. Then it deploys the Worker to
+# Cloudflare, and Hosting and the Firestore rules and indexes to the
+# `bustostamale` Firebase project.
 # Runs on every push to `main`, and can be triggered manually.
 
 on:
@@ -19,7 +20,7 @@ concurrency:
 
 jobs:
   deploy:
-    name: Build and deploy
+    name: Test, build and deploy
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -31,26 +32,57 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
 
-      - name: Install app dependencies
+      - name: Install site dependencies
         run: npm ci
 
-      - name: Install functions dependencies
-        run: npm --prefix functions ci
+      - name: Install Worker dependencies
+        run: npm --prefix worker ci
+
+      - name: Test site
+        run: npm test
+
+      - name: Test Worker
+        run: |
+          npm --prefix worker run typecheck
+          npm --prefix worker test
 
       # These VITE_* values are public browser config (baked into the client
-      # bundle), not Admin credentials. They live in GitHub Actions secrets so
-      # the repo never carries an .env file.
-      - name: Build frontend
+      # bundle), not credentials. They live in GitHub Actions secrets so the
+      # repo never carries an .env file.
+      - name: Build site
         env:
           VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
           VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
           VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_TURNSTILE_SITE_KEY: ${{ secrets.VITE_TURNSTILE_SITE_KEY }}
         run: npm run build
 
-      - name: Build functions
-        run: npm --prefix functions run build
+      # The Worker deploy is skipped until the CLOUDFLARE_API_TOKEN secret
+      # exists, so the pipeline stays green before the Cloudflare account is
+      # connected. A step `if` cannot read `secrets`, so this step turns the
+      # check into an output.
+      - name: Check for Cloudflare token
+        id: cloudflare
+        env:
+          HAS_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+        run: echo "enabled=$HAS_TOKEN" >> "$GITHUB_OUTPUT"
+
+      # Worker secrets (FIREBASE_SERVICE_ACCOUNT, RESEND_API_KEY,
+      # TURNSTILE_SECRET_KEY) are set 1 time with `wrangler secret put`.
+      # They are not in CI. See DEPLOYMENT.md.
+      - name: Deploy Worker
+        if: steps.cloudflare.outputs.enabled == 'true'
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy
 
       # Authenticate firebase-tools as a service account via Application
       # Default Credentials. The secret is a full service-account JSON.
@@ -62,17 +94,6 @@ jobs:
           printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-key.json"
           echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-key.json" >> "$GITHUB_ENV"
 
-      # Debug: prints ONLY the email + project of the key CI is using (never the
-      # private key), so we can confirm which service account is authenticating.
-      # Remove this step once the deploy is green.
-      - name: Show deploy identity (debug)
-        run: node -e "const k=require(process.env.GOOGLE_APPLICATION_CREDENTIALS); console.log('CI is deploying as:', k.client_email, '| project:', k.project_id)"
-
-      # Deploying `functions` requires the Blaze plan, so CI currently ships
-      # Hosting + Firestore rules/indexes only. Once Blaze is enabled on the
-      # project, change --only to hosting,firestore,functions to bring the
-      # /api backend live. (The functions build step above still runs so CI
-      # catches compile errors either way.)
       - name: Deploy to Firebase
         run: npx --yes firebase-tools deploy --only hosting,firestore --project bustostamale --non-interactive
 

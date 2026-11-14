@@ -17,11 +17,11 @@ export function OrderSummary({ selections, compact = false }: OrderSummaryProps)
   return (
     <aside className={compact ? "order-summary order-summary-compact" : "order-summary"}>
       <div className="summary-title">
-        <ShoppingBasket size={20} />
+        <ShoppingBasket size={20} aria-hidden="true" />
         <h2>Order Summary</h2>
       </div>
       {lines.length === 0 ? (
-        <p className="muted">Choose a package to start your request.</p>
+        <p className="muted">Select a menu item to start your order.</p>
       ) : (
         <>
           <div className="summary-lines">
@@ -40,11 +40,11 @@ export function OrderSummary({ selections, compact = false }: OrderSummaryProps)
               <strong>{formatMoney(totals.subtotalCents)}</strong>
             </div>
             <div>
-              <span>Estimated tax</span>
+              <span>Tax</span>
               <strong>{formatMoney(totals.taxCents)}</strong>
             </div>
             <div className="grand-total">
-              <span>Estimated total</span>
+              <span>Total</span>
               <strong>{formatMoney(totals.totalCents)}</strong>
             </div>
           </div>

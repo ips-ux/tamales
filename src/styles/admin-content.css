@@ -1,0 +1,133 @@
+/* Admin styles added in build piece 1: Site Content editor, contact messages. Tokens come from global.css. */
+
+/* Site Content editor */
+.site-content-form {
+  display: grid;
+  gap: 1rem;
+  max-width: 840px;
+}
+
+.site-content-lead {
+  margin: 0;
+}
+
+.site-content-card {
+  display: grid;
+  gap: 1rem;
+}
+
+.site-content-card h2 {
+  margin: 0;
+}
+
+.site-content-photo {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 420px;
+}
+
+.site-content-steps {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.site-content-steps legend {
+  margin-bottom: 0.5rem;
+  padding: 0;
+  font-weight: 900;
+}
+
+.site-content-step {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 1rem;
+}
+
+.site-content-help {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* Contact messages (Admin > Contacts) */
+.message-row {
+  display: grid;
+  gap: 0.5rem;
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.message-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.message-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.message-row-head small {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.message-row-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+}
+
+.message-row-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  color: var(--agave-dark);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.message-row-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.message-row-actions .button-small {
+  min-height: 44px;
+}
+
+.message-row-confirm {
+  font-weight: 900;
+}
+
+.message-row-delete {
+  color: var(--cream);
+  background: var(--red);
+}
+
+@media (max-width: 600px) {
+  .site-content-step {
+    grid-template-columns: 1fr;
+  }
+
+  .site-content-photo {
+    max-width: none;
+  }
+
+  .message-row-head small {
+    width: 100%;
+    margin-left: 0;
+  }
+}

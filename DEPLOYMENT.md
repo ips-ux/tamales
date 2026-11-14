@@ -1,133 +1,100 @@
-> **Notice:** parts of this file are out of date; see `docs/V1_FUNDAMENTALS.md`.
-> V1 uses no Cloud Functions. A Cloudflare Worker handles public writes.
-
 # Deployment
 
-The app is hosted on **Firebase** (Hosting + Functions + Firestore + Auth). GitHub
-holds the source and runs the deploy. GitHub Pages is **not** used: it can only serve
-static files and cannot run the `/api/**` Cloud Function that the order flow depends on.
+The site is on Firebase Hosting. The API is 1 Cloudflare Worker (`worker/`, name `bbt-api`).
+Firestore and Firebase Auth hold the data and the owner login. All services use a free tier.
 
-## How deploys happen
+## How a deploy occurs
 
-Every push to `main` triggers [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml),
-which:
+A push to `main` starts `.github/workflows/deploy.yml`. You can also start it from the Actions tab.
 
-1. Installs dependencies for the app and `functions/`.
-2. Builds the Vite frontend (injecting the `VITE_FIREBASE_*` browser config).
-3. Builds the Functions TypeScript.
-4. Runs `firebase deploy --only hosting,firestore,functions` against the
-   `bustostamale` project.
+1. It installs the site and the Worker dependencies.
+2. It runs the site tests, the Worker type check and the Worker tests.
+3. It builds the site with the `VITE_*` values.
+4. It deploys the Worker with `npx wrangler deploy`. It skips this step if `CLOUDFLARE_API_TOKEN` is empty.
+5. It deploys Hosting and the Firestore rules and indexes.
 
-You can also run it on demand from the repo's **Actions** tab (**Run workflow**), or
-deploy from your machine with `npm run deploy`.
+## First-time setup
 
-## Required GitHub Actions secrets
+Do these steps 1 time, in this sequence.
 
-Add these under **Settings → Secrets and variables → Actions → New repository secret**.
-Nothing here should ever be committed to the repo.
+1. **Cloudflare account.** Create a free account. Add the site `bustostamales.com` and set the Cloudflare nameservers at the registrar.
+2. **Domain to Firebase Hosting.** In the Firebase console, open Hosting and add the custom domains `bustostamales.com` and `www.bustostamales.com`. Add the records that Firebase shows to Cloudflare DNS. Set each record to "DNS only". Then open Authentication > Settings > Authorized domains and make sure the 2 domains are in the list.
+3. **Email Routing.** In Cloudflare, open Email > Email Routing and enable it. Route `orders@bustostamales.com` to `banginbustostamales@gmail.com`. Add a catch-all rule to the same address.
+4. **Resend.** Create a free Resend account. Add the domain `bustostamales.com`. Add the DNS records that Resend shows to Cloudflare DNS, then verify the domain. Create an API key with sending access.
+5. **Turnstile.** In Cloudflare, open Turnstile and add a widget in Managed mode. Add the hostnames `bustostamales.com`, `www.bustostamales.com` and `bustostamale.web.app`. Keep the site key and the secret key.
+6. **Worker.** Deploy the Worker and set its secrets (see below). Keep the Worker URL: `https://bbt-api.<your-subdomain>.workers.dev`.
+7. **Cloudflare API token.** In Cloudflare, open My Profile > API Tokens. Create a token from the "Edit Cloudflare Workers" template. Copy the account ID from the Workers overview page.
+8. **GitHub secrets.** Add the secrets in the table below. Then push to `main`.
 
-| Secret | Value | Where to get it |
-| --- | --- | --- |
-| `FIREBASE_SERVICE_ACCOUNTS` | Full JSON of a deploy service account | See below |
-| `VITE_FIREBASE_API_KEY` | Web API key | Firebase Console → Project settings → General → Your apps (Web) |
-| `VITE_FIREBASE_AUTH_DOMAIN` | `bustostamale.firebaseapp.com` | Same place (or your local `.env.local`) |
-| `VITE_FIREBASE_PROJECT_ID` | `bustostamale` | Same place |
-| `VITE_FIREBASE_APP_ID` | Web app ID | Same place |
+### Worker deploy and secrets
 
-The `VITE_*` values are the same ones already in your local `.env.local`. They are
-public browser config (they ship inside the client bundle regardless), so they are not
-sensitive — they live in secrets only so the repo stays env-file-free.
-
-## Creating the deploy service account
-
-The CI job authenticates as a Google service account. Create one with permission to
-deploy Hosting, Firestore, and Functions:
-
-1. In the [Google Cloud Console](https://console.cloud.google.com/iam-admin/serviceaccounts)
-   for the `bustostamale` project, create a service account named e.g. `github-deployer`.
-2. Grant it these roles:
-   - **Firebase Hosting Admin**
-   - **Cloud Functions Admin**
-   - **Cloud Datastore Owner** (Firestore rules/indexes)
-   - **Service Account User**
-   - **Firebase Authentication Admin** (only if the deploy touches Auth config)
-3. Create a JSON key for it and paste the entire file contents into the
-   `FIREBASE_SERVICE_ACCOUNT` secret.
-
-> Shortcut: running `firebase init hosting:github` locally will auto-provision a
-> least-privilege service account and store it as a repo secret for you. If you use
-> that path, point this workflow's secret name at the one it creates (or copy the JSON
-> into `FIREBASE_SERVICE_ACCOUNT`). Note that it scaffolds a **hosting-only** workflow,
-> so keep this one for the full Hosting + Functions + Firestore deploy.
-
-The existing Admin SDK key in `.secrets/` is meant for local admin scripts (seeding,
-setting admin claims). You can reuse it for CI if its role can deploy, but a dedicated
-`github-deployer` account is cleaner and easier to revoke.
-
-## Current state: free (Spark) plan
-
-The project is currently on the free Spark plan, which cannot deploy Cloud Functions.
-CI therefore deploys **Hosting + Firestore rules/indexes only**. Two things are
-intentionally parked until Blaze:
-
-1. `.github/workflows/deploy.yml` deploys `--only hosting,firestore` (no `functions`).
-2. `firebase.json` has the `/api/**` → `api` function rewrite removed, because Hosting
-   deploys fail if a rewrite targets a function that does not exist in the project.
-
-Consequence: the public site, login, and static pages work, but anything that calls
-`/api/**` (order submission, live admin data) is offline until Blaze is enabled.
-
-### Switching the backend on (Blaze)
-
-When the owner enables Blaze (Firebase Console → Settings → Usage and billing):
-
-1. Restore the rewrite in `firebase.json` (above the SPA catch-all):
-   ```json
-   { "source": "/api/**", "function": "api" }
-   ```
-2. In the workflow's deploy step, change `--only hosting,firestore` to
-   `--only hosting,firestore,functions`.
-3. Push to `main`; set a **budget alert** ($5–10) in Google Cloud Billing.
-
-At this app's traffic, Blaze's pay-as-you-go pricing still includes the free-tier
-allowances (2M function invocations/month, Firestore free quotas), so the realistic
-monthly cost is $0 to pocket change — but the alert catches surprises.
-
-## Notes
-
-- Firebase Hosting's default domains (`bustostamale.web.app`,
-  `bustostamale.firebaseapp.com`) are automatically authorized for Firebase Auth, so no
-  extra "authorized domains" configuration is needed for this hosting path.
-
-## Live POS (free tier)
-
-The owner-facing Live POS at `/admin/pos` is the one fully-live surface on the free plan.
-It talks to Firestore directly from the browser (no Cloud Function), so it costs nothing to run:
-
-- Building a ticket, choosing a payment method (Cash, Cash App, PayPal, Venmo, Zelle), and tapping
-  **Mark Paid + New Ticket** writes a document to the `posTickets` collection.
-- `/admin` (Dashboard) and `/admin/exports` read those tickets live — today's revenue, ticket and item
-  counts, recent sales, and a CSV download.
-- Firestore's on-device cache keeps the POS working with no signal; sales sync when the connection returns.
-
-### One-time setup
-
-1. **Enable Firestore** (free) in the Firebase Console → Build → Firestore Database → Create database.
-2. **Deploy the security rules** — a push to `main` does this via CI (`--only hosting,firestore`), or run
-   `firebase deploy --only firestore:rules` locally. The rules restrict `posTickets` to `admin: true` users.
-3. **Confirm the owner has the admin claim** — `npm --prefix functions run set-admin -- owner@email`
-   (already done for the current owner account).
-4. Sign in at `/login` with the owner account and open `/admin/pos`.
-
-Access is gated by the admin claim, so only the owner's signed-in account can read or write sales. No other
-collection is exposed to the browser.
-
-## Manual deploy from a workstation
+Worker secrets are not in CI and not in the repository. Set each one with `wrangler secret put`. A secret stays set through later deploys.
 
 ```powershell
+cd worker
+npm install
+npx wrangler login
+npx wrangler deploy
+Get-Content -Raw "C:\path\to\service-account.json" | npx wrangler secret put FIREBASE_SERVICE_ACCOUNT
+npx wrangler secret put RESEND_API_KEY
+npx wrangler secret put TURNSTILE_SECRET_KEY
+```
+
+| Worker secret | Value |
+| --- | --- |
+| `FIREBASE_SERVICE_ACCOUNT` | The full service-account JSON. The account needs the "Cloud Datastore User" role. The Firebase Admin SDK key has it. |
+| `RESEND_API_KEY` | The Resend API key. If it is empty, the Worker sends no email. |
+| `TURNSTILE_SECRET_KEY` | The Turnstile secret key. If it is empty, the Worker does not verify Turnstile. Always set it in production. |
+
+Values that are not secret are in `worker/wrangler.toml` under `[vars]`:
+
+| Worker var | Default |
+| --- | --- |
+| `FIREBASE_PROJECT_ID` | `bustostamale` |
+| `PUBLIC_SITE_ORIGIN` | `https://bustostamales.com` |
+| `ALLOWED_ORIGINS` | The 2 domain origins, `https://bustostamale.web.app`, and the 2 local development origins |
+| `EMAIL_FROM` | `Bangin Bustos Tamales <orders@bustostamales.com>` |
+| `OWNER_EMAIL` | `banginbustostamales@gmail.com` |
+
+### GitHub Actions secrets
+
+Add these in Settings > Secrets and variables > Actions.
+
+| Secret | Value |
+| --- | --- |
+| `FIREBASE_SERVICE_ACCOUNTS` | Full JSON of the deploy service account. It needs the roles "Firebase Hosting Admin", "Cloud Datastore Owner", "Firebase Rules Admin" and "Service Account User". |
+| `VITE_FIREBASE_API_KEY` | Firebase web API key. |
+| `VITE_FIREBASE_AUTH_DOMAIN` | `bustostamale.firebaseapp.com` |
+| `VITE_FIREBASE_PROJECT_ID` | `bustostamale` |
+| `VITE_FIREBASE_APP_ID` | Firebase web app ID. |
+| `VITE_API_BASE_URL` | The Worker URL, with no slash at the end. |
+| `VITE_TURNSTILE_SITE_KEY` | The Turnstile site key. |
+| `CLOUDFLARE_API_TOKEN` | The Cloudflare API token. If it is empty, CI does not deploy the Worker. |
+| `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account ID. |
+
+The `VITE_*` values are public. The browser bundle contains them.
+
+## Local development
+
+1. Copy `.dev.vars.example` to `.env.local`. Run `npm run firebase:env` to fill the Firebase values.
+2. Copy `worker/.dev.vars.example` to `worker/.dev.vars` and fill it. Git ignores this file.
+3. Run `npm --prefix worker install`, then `npm run worker:dev`. The Worker serves `http://127.0.0.1:8787`.
+4. Run `npm run dev` for the site.
+
+With no `TURNSTILE_SECRET_KEY`, the local Worker does not verify Turnstile. With no `RESEND_API_KEY`, it logs each email and does not send it.
+
+## Manual deploy
+
+```powershell
+npm run worker:deploy
 npm run deploy
 ```
 
-This runs `npm run build`, builds functions, and runs `firebase deploy`. Requires the
-Firebase CLI logged in (`firebase login`) or `GOOGLE_APPLICATION_CREDENTIALS` pointed at
-a service-account key.
+`npm run deploy` builds the site, then deploys Hosting and the Firestore rules and indexes. It needs the Firebase CLI with a login.
+`GET <Worker URL>/api/health` returns `{ "ok": true }` when the Worker runs.
+
+## Limits
+
+- Worker free tier: 100,000 requests each day.
+- Resend free tier: 3,000 emails each month and 100 emails each day.
+- Do not enable the Firebase Blaze plan. Do not add Cloud Functions.

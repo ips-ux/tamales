@@ -1,6 +1,7 @@
 import { Flame, Leaf } from "lucide-react";
 import { formatMoney } from "../lib/money";
 import type { MenuProduct } from "../lib/types";
+import { quantityLabel } from "./publicForm";
 import { QuantityStepper } from "./QuantityStepper";
 
 interface ProductCardProps {
@@ -17,10 +18,14 @@ export function ProductCard({ product, quantities, onQuantityChange }: ProductCa
       <div className="product-image-wrap">
         <img src={product.imageUrl} alt="" loading="lazy" />
         <span className="spice-chip">
-          {product.spiceLevel === "mild" ? <Leaf size={15} /> : <Flame size={15} />}
+          {product.spiceLevel === "mild" ? (
+            <Leaf size={15} aria-hidden="true" />
+          ) : (
+            <Flame size={15} aria-hidden="true" />
+          )}
           {product.spiceLevel}
         </span>
-        {isSoldOut && <span className="status-badge product-status-sold_out">Sold Out</span>}
+        {isSoldOut && <span className="status-badge product-status-sold_out">Sold out</span>}
       </div>
       <div className="product-body">
         <div>
@@ -33,7 +38,7 @@ export function ProductCard({ product, quantities, onQuantityChange }: ProductCa
             <dd>{product.ingredients.join(", ")}</dd>
           </div>
           <div>
-            <dt>Allergy note</dt>
+            <dt>Allergen notice</dt>
             <dd>{product.allergyNotice}</dd>
           </div>
         </dl>
@@ -43,7 +48,7 @@ export function ProductCard({ product, quantities, onQuantityChange }: ProductCa
               <div>
                 <strong>{variant.label}</strong>
                 <span>
-                  {variant.unitQuantity} tamales · {formatMoney(variant.priceCents)}
+                  {quantityLabel(variant.unitQuantity)} · {formatMoney(variant.priceCents)}
                 </span>
               </div>
               <QuantityStepper

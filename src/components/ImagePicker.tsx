@@ -1,23 +1,23 @@
 import { Camera, ImagePlus } from "lucide-react";
 import { ChangeEvent, useRef, useState } from "react";
+import { DEFAULT_IMAGE_MAX_CHARS, compressionPasses, scaledSize } from "./admin/imageCompression";
 
 interface ImagePickerProps {
   value: string;
   onChange: (dataUrl: string) => void;
   label?: string;
+  /**
+   * Target length of the data URL. The default fits a menu item document.
+   * A smaller value adds compression passes (see admin/imageCompression.ts).
+   */
+  maxChars?: number;
+  disabled?: boolean;
 }
 
-// Images are stored as data URLs inside the menu item itself (no Firebase
+// Images are stored as data URLs inside a Firestore document (no Firebase
 // Storage on the Spark plan), so they must be compressed to fit comfortably
 // inside Firestore's 1 MiB document limit alongside the rest of the fields.
-const TARGET_MAX_CHARS = 700_000;
-const PASSES = [
-  { maxDimension: 1024, quality: 0.82 },
-  { maxDimension: 800, quality: 0.7 },
-  { maxDimension: 640, quality: 0.55 }
-];
-
-async function compressImage(file: File): Promise<string> {
+async function compressImage(file: File, maxChars: number): Promise<string> {
   const objectUrl = URL.createObjectURL(file);
   try {
     const image = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -28,16 +28,16 @@ async function compressImage(file: File): Promise<string> {
     });
 
     let result = "";
-    for (const pass of PASSES) {
-      const scale = Math.min(1, pass.maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
+    for (const pass of compressionPasses(maxChars)) {
+      const size = scaledSize(image.naturalWidth, image.naturalHeight, pass.maxDimension);
       const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      canvas.width = size.width;
+      canvas.height = size.height;
       const context = canvas.getContext("2d");
       if (!context) throw new Error("Could not process the image in this browser.");
       context.drawImage(image, 0, 0, canvas.width, canvas.height);
       result = canvas.toDataURL("image/jpeg", pass.quality);
-      if (result.length <= TARGET_MAX_CHARS) return result;
+      if (result.length <= maxChars) return result;
     }
     return result;
   } finally {
@@ -45,7 +45,13 @@ async function compressImage(file: File): Promise<string> {
   }
 }
 
-export function ImagePicker({ value, onChange, label = "Photo" }: ImagePickerProps) {
+export function ImagePicker({
+  value,
+  onChange,
+  label = "Photo",
+  maxChars = DEFAULT_IMAGE_MAX_CHARS,
+  disabled = false
+}: ImagePickerProps) {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -62,7 +68,7 @@ export function ImagePicker({ value, onChange, label = "Photo" }: ImagePickerPro
     setBusy(true);
     setError(null);
     try {
-      onChange(await compressImage(file));
+      onChange(await compressImage(file, maxChars));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not read that image.");
     } finally {
@@ -73,12 +79,12 @@ export function ImagePicker({ value, onChange, label = "Photo" }: ImagePickerPro
   return (
     <div className="image-picker">
       <span className="image-picker-label">{label}</span>
-      {value && <img className="admin-thumb image-picker-preview" src={value} alt="Menu item preview" />}
+      {value && <img className="admin-thumb image-picker-preview" src={value} alt="" />}
       <div className="image-picker-actions">
         <button
           className="button button-small"
           type="button"
-          disabled={busy}
+          disabled={busy || disabled}
           onClick={() => cameraInputRef.current?.click()}
         >
           <Camera size={16} />
@@ -87,7 +93,7 @@ export function ImagePicker({ value, onChange, label = "Photo" }: ImagePickerPro
         <button
           className="button button-small"
           type="button"
-          disabled={busy}
+          disabled={busy || disabled}
           onClick={() => galleryInputRef.current?.click()}
         >
           <ImagePlus size={16} />

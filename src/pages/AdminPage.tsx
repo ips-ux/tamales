@@ -17,17 +17,18 @@ import {
   RotateCcw,
   Settings,
   Trash2,
-  Users,
   X
 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { navigate } from "../App";
+import { ContactMessagesCard } from "../components/admin/ContactMessagesCard";
+import { SiteContentView } from "../components/admin/SiteContentView";
 import { ChangePasswordForm } from "../components/ChangePasswordForm";
 import { ImagePicker } from "../components/ImagePicker";
 import { QRCodePanel } from "../components/QRCodePanel";
+import { apiConfigured, sendPosReceipt } from "../lib/api";
 import { useAvailabilityWindows, usePickupLocations } from "../lib/availabilityStore";
 import {
-  contactSubmissions,
   menuProducts,
   availabilityWindows as starterAvailabilityWindows,
   paymentSettings as initialPaymentSettings,
@@ -36,7 +37,6 @@ import {
 } from "../data/fixtures";
 import { useBusinessSettings } from "../lib/businessSettings";
 import { downloadCsv } from "../lib/csv";
-import { receiptEmailConfigured, sendReceiptEmail } from "../lib/emailReceipt";
 import {
   addExpense,
   addReceiptContact,
@@ -157,6 +157,7 @@ function adminTitle(path: string) {
   if (path.includes("/menu")) return "Menu";
   if (path.includes("/availability")) return "Availability";
   if (path.includes("/vendor")) return "Vendor";
+  if (path.includes("/content")) return "Site Content";
   if (path.includes("/contacts")) return "Contacts";
   if (path.includes("/settings")) return "Settings";
   if (path.includes("/reports") || path.includes("/exports")) return "Reports";
@@ -281,7 +282,7 @@ export function AdminPage({ path }: AdminPageProps) {
   return (
     <main className="admin-shell">
       <section className="admin-heading">
-        <p className="eyebrow">{isPosMode ? "Live POS Mode" : "Owner Area"}</p>
+        <p className="eyebrow">{isPosMode ? "Live POS Mode" : "Admin"}</p>
         <h1>{title}</h1>
       </section>
 
@@ -314,6 +315,7 @@ export function AdminPage({ path }: AdminPageProps) {
       {title === "Menu" && <MenuView products={products} />}
       {title === "Availability" && <AvailabilityView />}
       {title === "Vendor" && <VendorAdminView />}
+      {title === "Site Content" && <SiteContentView />}
       {title === "Contacts" && <ContactsView />}
       {title === "Settings" && (
         <SettingsView payments={payments} products={products} testMode={testMode} />
@@ -768,7 +770,6 @@ function PosView({
       {receipt && (
         <ReceiptDrawer
           ticket={receipt}
-          businessName={business.name}
           onClose={() => setReceipt(null)}
         />
       )}
@@ -790,17 +791,17 @@ interface PaidTicketSnapshot {
 
 function ReceiptDrawer({
   ticket,
-  businessName,
   onClose
 }: {
   ticket: PaidTicketSnapshot;
-  businessName: string;
   onClose: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [sentTo, setSentTo] = useState("");
   const [savedWithoutEmail, setSavedWithoutEmail] = useState(false);
+  // The contact is saved 1 time. A second try after a send error only sends.
+  const [savedContactEmail, setSavedContactEmail] = useState("");
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -811,41 +812,34 @@ function ReceiptDrawer({
     setBusy(true);
     setError("");
     try {
-      await addReceiptContact({
-        email,
-        marketingOptIn,
-        ticketId: ticket.ticketId,
-        ticketNumber: ticket.ticketNumber,
-        totalCents: ticket.totalCents,
-        isTest: ticket.isTest
-      });
-      if (receiptEmailConfigured()) {
-        await sendReceiptEmail({
-          toEmail: email,
-          businessName,
+      if (savedContactEmail !== email) {
+        await addReceiptContact({
+          email,
+          marketingOptIn,
+          ticketId: ticket.ticketId,
           ticketNumber: ticket.ticketNumber,
-          purchasedAt: formatBusinessDateTime(new Date().toISOString()),
-          items: ticket.items.map((item) => ({
-            name: item.productName,
-            quantity: item.quantity,
-            unitPrice: formatMoney(item.unitPriceCents),
-            lineTotal: formatMoney(item.quantity * item.unitPriceCents)
-          })),
-          subtotal: formatMoney(ticket.subtotalCents),
-          tax: formatMoney(ticket.taxCents),
-          total: formatMoney(ticket.totalCents),
-          paymentMethod: paymentLabels[ticket.method],
-          customerName: ticket.customerName || undefined,
-          signupUrl: marketingOptIn
-            ? undefined
-            : `${window.location.origin}/updates?email=${encodeURIComponent(email)}`
+          totalCents: ticket.totalCents,
+          isTest: ticket.isTest
+        });
+        setSavedContactEmail(email);
+      }
+      // The Worker reads the sale and sends the receipt email.
+      if (apiConfigured()) {
+        await sendPosReceipt({
+          ticketId: ticket.ticketId,
+          toEmail: email,
+          includeSignupLink: !marketingOptIn
         });
       } else {
         setSavedWithoutEmail(true);
       }
       setSentTo(email);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not send the receipt.");
+      setError(
+        err instanceof Error && err.message
+          ? err.message
+          : "We could not send the receipt. Check your connection, then try again."
+      );
     } finally {
       setBusy(false);
     }
@@ -863,11 +857,11 @@ function ReceiptDrawer({
         {sentTo ? (
           <>
             <ClipboardCheck size={28} />
-            <h2>{savedWithoutEmail ? "Email saved" : "Receipt sent!"}</h2>
+            <h2>{savedWithoutEmail ? "Email saved" : "Receipt sent"}</h2>
             <p className="muted">
               {savedWithoutEmail
-                ? `${sentTo} was added to the contact list. Email sending isn't configured yet, so no receipt email went out.`
-                : `Receipt emailed to ${sentTo}.`}
+                ? `We saved ${sentTo}. Email is not set up, so we sent no receipt.`
+                : `We sent the receipt to ${sentTo}.`}
             </p>
             <button className="button button-primary" type="button" onClick={onClose}>
               Done
@@ -877,8 +871,8 @@ function ReceiptDrawer({
           <>
             <h2>Receipt?</h2>
             <p className="muted">
-              {formatMoney(ticket.totalCents)} · {ticket.ticketNumber}. Hand the device to the
-              customer to email their receipt.
+              {formatMoney(ticket.totalCents)} · {ticket.ticketNumber}. Give the device to the
+              customer.
             </p>
             <form className="settings-list" onSubmit={handleSubmit}>
               <label>
@@ -895,7 +889,7 @@ function ReceiptDrawer({
               </label>
               <label className="toggle-row">
                 <input name="optIn" type="checkbox" />
-                <span>Send me updates about the next pop-up and events</span>
+                <span>Add me to the email list for future pop-ups</span>
               </label>
               {error && (
                 <p className="form-notice form-notice-error" role="alert">
@@ -905,10 +899,10 @@ function ReceiptDrawer({
               <div className="button-row">
                 <button className="button button-primary" type="submit" disabled={busy}>
                   <Mail size={18} />
-                  {busy ? "Sending…" : "Email My Receipt"}
+                  {busy ? "Sending..." : "Email My Receipt"}
                 </button>
                 <button className="button button-ghost" type="button" onClick={onClose}>
-                  No Thanks
+                  Skip
                 </button>
               </div>
             </form>
@@ -2427,7 +2421,7 @@ interface MarketingContactRow {
   id: string;
   email: string;
   optedIn: boolean;
-  source: "POS receipt" | "Landing page";
+  source: "POS receipt" | "Website";
   reference: string;
   isTest: boolean;
   createdAtUtc: string;
@@ -2452,7 +2446,7 @@ function ContactsView() {
       id: `signup-${signup.id}`,
       email: signup.email,
       optedIn: true,
-      source: "Landing page" as const,
+      source: "Website" as const,
       reference: "",
       isTest: false,
       createdAtUtc: signup.createdAtUtc
@@ -2461,7 +2455,7 @@ function ContactsView() {
   const optedIn = marketing.filter((row) => row.optedIn);
 
   function exportMarketingCsv() {
-    const header = ["Email", "Opted in", "Source", "Reference", "Collected"];
+    const header = ["Email", "On the email list", "Source", "Reference", "Date"];
     const rows = marketing.map((row) => [
       row.email,
       row.optedIn ? "yes" : "no",
@@ -2469,14 +2463,15 @@ function ContactsView() {
       row.reference + (row.isTest ? " (test)" : ""),
       formatBusinessDateTime(row.createdAtUtc)
     ]);
-    downloadCsv(`bbt-marketing-contacts-${businessTodayKey()}.csv`, [header, ...rows]);
+    downloadCsv(`bbt-email-list-${businessTodayKey()}.csv`, [header, ...rows]);
   }
 
   return (
     <section className="menu-manager">
+      <ContactMessagesCard />
       <article className="admin-card">
         <div className="toolbar">
-          <h2>Marketing Contacts</h2>
+          <h2>Email List</h2>
           <button
             className="button button-ghost"
             type="button"
@@ -2484,48 +2479,31 @@ function ContactsView() {
             disabled={marketing.length === 0}
           >
             <Download size={18} />
-            Export CSV
+            Download CSV
           </button>
         </div>
         <div className="admin-row">
-          <span>{marketing.length} collected</span>
-          <strong>{optedIn.length} opted into updates</strong>
+          <span>{marketing.length} email addresses</span>
+          <strong>{optedIn.length} on the email list</strong>
         </div>
-        {error && <p className="muted">Contacts unavailable: {error}</p>}
-        {!error && marketing.length === 0 && (
-          <p className="muted">
-            Emails from the POS receipt drawer and the /updates signup page will appear here.
+        {error && (
+          <p className="form-notice form-notice-error" role="alert">
+            We could not load the email addresses. Check your connection, then reload the page.
           </p>
         )}
+        {!error && marketing.length === 0 && <p className="muted">No email addresses.</p>}
         {marketing.map((row) => (
           <article className="contact-row" key={row.id}>
             <Mail size={21} />
             <div>
               <strong>{row.email}</strong>
               <span>
-                {row.optedIn ? "Opted into updates" : "Receipt only"} · {row.source}
+                {row.optedIn ? "On the email list" : "Receipt only"} · {row.source}
                 {row.reference ? ` · ${row.reference}` : ""}
-                {row.isTest ? " · TEST" : ""}
+                {row.isTest ? " · Test" : ""}
               </span>
             </div>
             <small>{formatBusinessDateTime(row.createdAtUtc)}</small>
-          </article>
-        ))}
-      </article>
-
-      <article className="admin-card">
-        <h2>Business &amp; Bulk Inquiries</h2>
-        <p className="muted">
-          Catering, events, wholesale, and waitlist requests from the website and vendor pages.
-        </p>
-        {contactSubmissions.map((contact) => (
-          <article className="contact-row" key={contact.id}>
-            <Users size={21} />
-            <div>
-              <strong>{contact.name}</strong>
-              <span>{contact.contact} / {contact.productInterest} / {contact.approximateQuantity}</span>
-            </div>
-            <small>{formatBusinessDateTime(contact.createdAtUtc)}</small>
           </article>
         ))}
       </article>

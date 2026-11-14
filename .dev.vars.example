@@ -1,14 +1,15 @@
-APP_ORIGIN=http://127.0.0.1:5173
-PUBLIC_APP_ORIGIN=http://127.0.0.1:5173
+# Site variables for local development. Copy this file to .env.local at the repository root.
+# Vite puts each VITE_ value in the browser bundle. Do not put a secret here.
+# Worker secrets are in worker/.dev.vars.example.
 
-FIREBASE_PROJECT_ID=bustostamale
-
-# Vite client Firebase config
-VITE_FIREBASE_API_KEY=replace_me
+# Firebase web config. `npm run firebase:env` writes these 4 values to .env.local.
+VITE_FIREBASE_API_KEY=
 VITE_FIREBASE_AUTH_DOMAIN=bustostamale.firebaseapp.com
 VITE_FIREBASE_PROJECT_ID=bustostamale
-VITE_FIREBASE_APP_ID=replace_me
+VITE_FIREBASE_APP_ID=
 
-# Optional notification adapter placeholders
-OWNER_NOTIFICATION_EMAIL=orders@example.com
-NOTIFICATION_PROVIDER=console
+# URL of the Worker, with no slash at the end. `npm run worker:dev` serves http://127.0.0.1:8787.
+VITE_API_BASE_URL=http://127.0.0.1:8787
+
+# Turnstile site key (public). Leave it empty to hide the Turnstile check in local development.
+VITE_TURNSTILE_SITE_KEY=

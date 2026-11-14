@@ -18,11 +18,11 @@ export function QuantityStepper({
   onChange
 }: QuantityStepperProps) {
   return (
-    <div className="quantity-stepper" aria-label={label}>
+    <div className="quantity-stepper" role="group" aria-label={`Quantity: ${label}`}>
       <button
         type="button"
         className="icon-button"
-        aria-label={`Decrease ${label}`}
+        aria-label={`Decrease quantity of ${label}`}
         onClick={() => onChange(Math.max(min, value - 1))}
         disabled={disabled || value <= min}
       >
@@ -32,7 +32,7 @@ export function QuantityStepper({
       <button
         type="button"
         className="icon-button"
-        aria-label={`Increase ${label}`}
+        aria-label={`Increase quantity of ${label}`}
         onClick={() => onChange(Math.min(max, value + 1))}
         disabled={disabled}
       >

@@ -1,0 +1,156 @@
+// Bangin Bustos Tamales API. The HTTP contract is in src/lib/api.ts of the site.
+//   200 { ok: true, ...data }
+//   4xx/5xx { ok: false, error: "<message that is safe to show>" }
+
+import { corsHeaders, isAllowedOrigin } from "./cors";
+import { upsertCustomer } from "./customers";
+import { sendEmail, sendEmailSafely, type Mailer } from "./email";
+import { readConfig, type Config, type Env } from "./env";
+import { Firestore } from "./firestore";
+import { getAccessToken, parseServiceAccount } from "./googleAuth";
+import { isHoneypotFilled, verifyTurnstile } from "./guard";
+import { HttpError, json, readJsonBody } from "./http";
+import { requireAdmin } from "./idToken";
+import { buildContactEmail, buildReceiptEmail } from "./messages";
+import { createOrder } from "./orders";
+import { sha256Hex } from "./base64";
+import { validateContact, validateReceipt, validateSignup } from "./validate";
+
+interface Context {
+  request: Request;
+  env: Env;
+  cfg: Config;
+  mailer: Mailer;
+  defer: (work: Promise<unknown>) => void;
+}
+
+function database(ctx: Context): Firestore {
+  if (!ctx.env.FIREBASE_SERVICE_ACCOUNT) {
+    console.error("FIREBASE_SERVICE_ACCOUNT is not set.");
+    throw new HttpError(503, "This form is not available now. Try again later.");
+  }
+  const account = parseServiceAccount(ctx.env.FIREBASE_SERVICE_ACCOUNT);
+  return new Firestore(ctx.cfg.projectId, () => getAccessToken(account));
+}
+
+async function businessTimeZone(db: Firestore): Promise<string> {
+  const settings = await db.get("settings/business");
+  return typeof settings?.timezone === "string" && settings.timezone ? settings.timezone : "America/Denver";
+}
+
+/**
+ * Reads the body of a public form and runs the abuse checks.
+ * Returns null if the honeypot is filled. The caller then answers ok and saves nothing.
+ */
+async function readPublicForm(ctx: Context): Promise<Record<string, unknown> | null> {
+  const body = await readJsonBody(ctx.request);
+  if (isHoneypotFilled(body)) {
+    console.warn("Honeypot filled. Request dropped.");
+    return null;
+  }
+  await verifyTurnstile(
+    body.turnstileToken,
+    ctx.env.TURNSTILE_SECRET_KEY,
+    ctx.request.headers.get("CF-Connecting-IP")
+  );
+  return body;
+}
+
+async function handleContact(ctx: Context): Promise<unknown> {
+  const body = await readPublicForm(ctx);
+  if (!body) return {};
+  const input = validateContact(body);
+  const db = database(ctx);
+  const createdAtUtc = new Date().toISOString();
+  await db.set(`contactMessages/${crypto.randomUUID()}`, { ...input, createdAtUtc, read: false });
+  ctx.defer(
+    businessTimeZone(db)
+      .catch(() => "America/Denver")
+      .then((timeZone) => sendEmailSafely(ctx.mailer, buildContactEmail(input, createdAtUtc, timeZone, ctx.cfg)))
+  );
+  return {};
+}
+
+async function handleSignup(ctx: Context): Promise<unknown> {
+  const body = await readPublicForm(ctx);
+  if (!body) return {};
+  const input = validateSignup(body);
+  const db = database(ctx);
+  // The document id comes from the email address, so 1 address makes 1 signup.
+  const path = `marketingSignups/${await sha256Hex(input.email)}`;
+  if (!(await db.get(path))) {
+    await db.set(path, { email: input.email, source: input.source, createdAtUtc: new Date().toISOString() });
+  }
+  await upsertCustomer(db, { email: input.email, marketingOptIn: true });
+  return {};
+}
+
+async function handleOrder(ctx: Context): Promise<unknown> {
+  const body = await readPublicForm(ctx);
+  if (!body) return {};
+  const order = await createOrder(body.order, {
+    db: database(ctx),
+    mailer: ctx.mailer,
+    cfg: ctx.cfg,
+    defer: ctx.defer
+  });
+  return { order };
+}
+
+async function handleReceipt(ctx: Context): Promise<unknown> {
+  await requireAdmin(ctx.request.headers.get("Authorization"), ctx.cfg.projectId);
+  const input = validateReceipt(await readJsonBody(ctx.request));
+  const db = database(ctx);
+  const ticket = await db.get(`posTickets/${input.ticketId}`);
+  if (!ticket) throw new HttpError(404, "We could not find this sale.");
+  const timeZone = await businessTimeZone(db);
+  try {
+    await sendEmail(
+      ctx.mailer,
+      buildReceiptEmail(ticket, { toEmail: input.toEmail, includeSignupLink: input.includeSignupLink, timeZone }, ctx.cfg)
+    );
+  } catch (error) {
+    console.error("Receipt email failed", error);
+    throw new HttpError(502, "We could not send the receipt. Try again.");
+  }
+  return {};
+}
+
+const POST_ROUTES: Record<string, (ctx: Context) => Promise<unknown>> = {
+  "/api/contact": handleContact,
+  "/api/signup": handleSignup,
+  "/api/orders": handleOrder,
+  "/api/receipts": handleReceipt
+};
+
+export async function handleRequest(request: Request, env: Env, defer: Context["defer"]): Promise<Response> {
+  const cfg = readConfig(env);
+  const origin = request.headers.get("Origin");
+  const cors = corsHeaders(origin, cfg.allowedOrigins);
+  const path = new URL(request.url).pathname.replace(/\/+$/, "") || "/";
+
+  try {
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+    if (request.method === "GET" && path === "/api/health") return json({ ok: true }, 200, cors);
+
+    const route = POST_ROUTES[path];
+    if (!route) throw new HttpError(404, "Not found.");
+    if (request.method !== "POST") throw new HttpError(405, "Method not allowed.");
+    // A browser always sends Origin on a cross-site POST. Reject a site that is not in the list.
+    if (origin && !isAllowedOrigin(origin, cfg.allowedOrigins)) throw new HttpError(403, "Origin not allowed.");
+
+    const mailer: Mailer = { apiKey: env.RESEND_API_KEY, from: cfg.emailFrom };
+    const data = (await route({ request, env, cfg, mailer, defer })) as Record<string, unknown>;
+    return json({ ok: true, ...data }, 200, cors);
+  } catch (error) {
+    if (error instanceof HttpError) return json({ ok: false, error: error.message }, error.status, cors);
+    console.error("Unhandled error", error);
+    return json({ ok: false, error: "Something went wrong. Try again." }, 500, cors);
+  }
+}
+
+export default {
+  fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    return handleRequest(request, env, (work) => ctx.waitUntil(work));
+  }
+};

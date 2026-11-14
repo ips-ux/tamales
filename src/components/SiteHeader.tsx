@@ -4,10 +4,11 @@ import {
   ClipboardList,
   Clock,
   CreditCard,
-  Home,
+  FileText,
+  Info,
   LayoutDashboard,
   ListChecks,
-  LogIn,
+  Mail,
   Menu,
   Settings,
   Store,
@@ -18,7 +19,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { navigate } from "../App";
-import { watchNewPreorderCount } from "../lib/firestoreClient";
+import { watchNewPreorderCount, watchUnreadContactMessageCount } from "../lib/firestoreClient";
 
 interface SiteHeaderProps {
   isAdmin?: boolean;
@@ -37,8 +38,8 @@ interface NavGroup {
 
 const publicLinks: NavLink[] = [
   { href: "/order", label: "Place an Order", icon: ClipboardList },
-  { href: "/about", label: "About Me", icon: Home },
-  { href: "/login", label: "Login", icon: LogIn }
+  { href: "/about", label: "About", icon: Info },
+  { href: "/contact", label: "Contact", icon: Mail }
 ];
 
 // Live POS is deliberately not in here — it's the standout entry point
@@ -66,6 +67,7 @@ const adminGroups: NavGroup[] = [
     label: "Business",
     links: [
       { href: "/admin/vendor", label: "Vendor", icon: Store },
+      { href: "/admin/content", label: "Site Content", icon: FileText },
       { href: "/admin/contacts", label: "Contacts", icon: Users },
       { href: "/admin/settings", label: "Settings", icon: Settings },
       { href: "/admin/reports", label: "Reports", icon: BarChart3 }
@@ -78,6 +80,7 @@ const livePosLink: NavLink = { href: "/admin/pos", label: "Live POS", icon: Cred
 export function SiteHeader({ isAdmin = false }: SiteHeaderProps) {
   const [open, setOpen] = useState(false);
   const [newPreorderCount, setNewPreorderCount] = useState(0);
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0);
 
   // Live badge for unacknowledged pre-orders. Only subscribed on admin
   // routes; permission/offline errors are swallowed and just show no badge,
@@ -87,6 +90,15 @@ export function SiteHeader({ isAdmin = false }: SiteHeaderProps) {
     return watchNewPreorderCount(
       (count) => setNewPreorderCount(count),
       () => setNewPreorderCount(0)
+    );
+  }, [isAdmin]);
+
+  // Same pattern for contact messages that the owner has not read.
+  useEffect(() => {
+    if (!isAdmin) return;
+    return watchUnreadContactMessageCount(
+      (count) => setUnreadMessageCount(count),
+      () => setUnreadMessageCount(0)
     );
   }, [isAdmin]);
 
@@ -135,6 +147,11 @@ export function SiteHeader({ isAdmin = false }: SiteHeaderProps) {
                       {link.label}
                       {link.href === "/admin/preorders" && newPreorderCount > 0 && (
                         <span className="nav-badge">{newPreorderCount}</span>
+                      )}
+                      {link.href === "/admin/contacts" && unreadMessageCount > 0 && (
+                        <span className="nav-badge" aria-label={`${unreadMessageCount} new`}>
+                          {unreadMessageCount}
+                        </span>
                       )}
                     </a>
                   ))}

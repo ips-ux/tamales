@@ -1,0 +1,11 @@
+# Worker secrets for local development. Copy this file to worker/.dev.vars.
+# Do not commit worker/.dev.vars. Production secrets use `npx wrangler secret put`.
+
+# The full service-account JSON on 1 line.
+FIREBASE_SERVICE_ACCOUNT=
+
+# Resend API key. If it is empty, the Worker sends no email and logs a warning.
+RESEND_API_KEY=
+
+# Turnstile secret key. If it is empty, the Worker skips the Turnstile check.
+TURNSTILE_SECRET_KEY=

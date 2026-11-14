@@ -25,6 +25,27 @@ Agreed on 2026-11-13 by the developer and the owner. Do not change these without
 
 ## Unreleased
 
+### 2026-11-13 - Build piece 1: Foundation
+
+- **Changed:**
+  - New `worker/`: Cloudflare Worker `bbt-api` with `POST /api/contact`, `/api/signup`, `/api/orders`, `/api/receipts` and `GET /api/health`. It uses the Firestore REST API with a service-account token, Resend for email, Turnstile and a honeypot. It has 0 runtime dependencies.
+  - New `src/lib/api.ts` (the HTTP contract) and `src/lib/siteContent.ts` (owner text and photos with defaults).
+  - Public site: Contact page, footer, 404 page, new Privacy and Terms, new Home and About copy, icons, share image, `robots.txt`. All public forms send through the Worker.
+  - Admin: Site Content editor at `/admin/content`, contact messages with an unread badge, POS receipt through the Worker.
+  - `firebase/firestore.rules`: public creates closed on `orders` and `marketingSignups`. Added `siteContent`, `siteImages`, `contactMessages`, `customers`.
+  - Removed `functions/`, `src/lib/emailReceipt.ts` (EmailJS), the seed script and `firebase/firestore.seed.json`. Admin scripts moved to `scripts/`.
+  - `.github/workflows/deploy.yml`: runs both test sets, deploys the Worker if `CLOUDFLARE_API_TOKEN` exists.
+  - `README.md`, `DEPLOYMENT.md` and `ADMIN_SETUP.md` rewritten.
+- **Why:** V1 needs 1 server for public writes and email before events, orders and payments can be built.
+- **Decisions:**
+  - The Worker does not trust totals, status or order numbers from the browser. It reads prices and the tax rate from Firestore.
+  - A filled honeypot gets `{ ok: true }` with no data, and nothing is saved.
+  - New public CSS goes in `src/styles/public.css`. New admin CSS goes in `src/styles/admin-content.css`.
+  - `orders` keeps a public `get` by token until piece 2 adds `trackers`.
+  - `/api/orders` keeps the old order model and a random `BBT-<year>-<5 characters>` number. Piece 2 replaces both.
+- **Verify:** `npm run build` passes. Site tests: 32 pass. Worker tests: 76 pass. Worker type check passes. `wrangler deploy --dry-run` passes. Not verified: real calls to Firestore, Resend, Turnstile and Google keys; the rules in an emulator; any screen in a browser.
+- **Next:** Account setup in the browser (Cloudflare DNS, Email Routing, Resend, Turnstile, Worker secrets, GitHub secrets). Then piece 2. Known gaps: no rate limit and no idempotency on the Worker; the 2 logo files are large; the 404 page returns HTTP 200.
+
 ### 2026-11-13 - Project records established
 
 - **Changed:** Added `AGENT_changelog.md`, `USER_changelog.md` and `CLAUDE.md`. Added an out-of-date notice to the top of `ARCHITECTURE.md`, `HANDOFF.md`, `SECURITY.md`, `BanginBustosTamalesPlan.md`, `DEPLOYMENT.md`, `ADMIN_SETUP.md` and `README.md`. `docs/V1_FUNDAMENTALS.md` and `docs/V1_DESIGN.md` are written in the same change set.

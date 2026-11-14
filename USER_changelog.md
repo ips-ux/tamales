@@ -15,6 +15,16 @@ If a note needs nothing from you, it says so.
 - A PayPal Business account.
 - Your sign-ins for Cloudflare, Resend and Firebase during setup. You type them in yourself.
 
+## 2026-11-13 - The foundation is built
+
+- Your site has new pages: Contact, a footer on each page, Privacy, Terms, and a "page not found" page.
+- You can now change the site yourself. Open Admin, then Site Content. You can change the 2 photos, the tagline, your story, the 3 steps, your policies and the footer text.
+- Messages from the Contact page show in Admin under Contacts, with a badge for new messages.
+- A new server now receives each order, message and email list signup. It checks the prices and stops robots.
+- Email does not send yet. It starts after we connect your website name, in our setup session.
+- None of this is on the live site yet. Your developer checks the screens first.
+- From you: your sign-ins for the setup session. See the list above.
+
 ## 2026-11-13 - Project records established
 
 - This page is new. Each time the app changes, you get a short note here.
