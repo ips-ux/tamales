@@ -54,6 +54,7 @@ function makeOrder(overrides: Partial<OrderRecord> = {}): OrderRecord {
     updatedAtUtc: "2026-11-10T18:00:00.000Z",
     approvedAtUtc: "",
     payByUtc: "",
+    stockHeld: false,
     ...overrides
   };
 }

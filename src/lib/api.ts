@@ -1,5 +1,5 @@
 // Client for the Cloudflare Worker in worker/. The Worker is the only door for
-// public writes (orders, contact messages, email list signups) and it sends all
+// public writes (orders, contact messages, waitlist, email list signups) and it sends all
 // email. See docs/V1_FUNDAMENTALS.md section 3.
 //
 // Contract: every route is POST with a JSON body and returns JSON.
@@ -9,7 +9,6 @@
 // Owner routes take a Firebase ID token in the Authorization header.
 
 import { authHeader } from "./firebaseClient";
-import type { OrderRecord } from "./types";
 import type {
   CreateOrderInput,
   CreateOrderResult,
@@ -88,23 +87,6 @@ export function sendSignup(input: SignupInput): Promise<{ ok: true }> {
   return post("/api/signup", input);
 }
 
-export interface OrderInput extends PublicFormGuard {
-  /**
-   * The order as the browser built it. The Worker reads prices and the tax
-   * rate from Firestore and computes the totals again; it does not trust the
-   * totals, status, or order number in this record.
-   */
-  order: OrderRecord;
-}
-
-/**
- * POST /api/orders — saves the order, emails the customer and the owner.
- * `order` is absent when the Worker drops the request (filled honeypot).
- */
-export function sendOrder(input: OrderInput): Promise<{ ok: true; order?: OrderRecord }> {
-  return post("/api/orders", input);
-}
-
 export interface PosReceiptInput {
   /** Firestore id of the POS sale (posTickets document). */
   ticketId: string;
@@ -122,7 +104,6 @@ export async function sendPosReceipt(input: PosReceiptInput): Promise<{ ok: true
 // ---------------------------------------------------------------------------
 // Build piece 2: events and ordering. Types are in shared/model.ts.
 // ---------------------------------------------------------------------------
-
 
 async function ownerHeaders(): Promise<Record<string, string>> {
   const auth = await authHeader();

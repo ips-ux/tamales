@@ -32,12 +32,8 @@ export function phoneHref(value: string): string {
   return `tel:${digits}`;
 }
 
-/** V1_DESIGN section 5: "6 (half dozen)", "12 (1 dozen)", "24 (2 dozen)", "5 tamales". */
-export function quantityLabel(count: number): string {
-  if (count === 6) return "6 (half dozen)";
-  if (count >= 12 && count % 12 === 0) return `${count} (${count / 12} dozen)`;
-  return count === 1 ? "1 tamale" : `${count} tamales`;
-}
+/** V1_DESIGN section 5: "6 (half dozen)", "12 (1 dozen)", "24 (2 dozen)", "5 tamales". The Worker uses the same rule. */
+export { quantityLabel } from "../../shared/quantity";
 
 /** The first word of a full name, for "Thanks, Jane!". */
 export function firstName(fullName: string): string {

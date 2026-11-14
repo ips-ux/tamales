@@ -25,6 +25,27 @@ Agreed on 2026-11-13 by the developer and the owner. Do not change these without
 
 ## Unreleased
 
+### 2026-11-14 - Build piece 2: Events and ordering
+
+- **Changed:**
+  - New `shared/`: the V1 order model (`model.ts`) and pure rules for pricing, quantity labels, order numbers, delivery rings, order states and events. The site and the Worker both import it.
+  - Worker: `POST /api/v1/orders`, `/api/v1/delivery-quote`, `/api/v1/waitlist`, `/api/admin/orders/action`. Firestore transactions issue order numbers and change fixed allotments. Order emails. The old `POST /api/orders` and `worker/src/orders.ts` are deleted.
+  - Customer site: `/order` (pre-orders and Request a Batch), `/e/{eventId}` (mobile ordering at an event), `/t/{trackerToken}` (order tracker with alerts and payment help), `/kiosk/{kioskToken}` (kiosk with exit PIN and waitlist). Home shows the next event and a "Track your order" link.
+  - Admin: Events area (replaces Availability and Vendor) with kiosk and mobile links, printable QR codes, prep sheet and pickup list. New Pre-Orders queue. Live orders in Live POS with a chime, a badge, a pause switch and sold-out toggles. Settings, Ordering tab. Waitlist card in Contacts.
+  - Removed: the old order model (`availabilityWindows`, `pickupLocations`, `vendorSessions`, the confirmation page, `VendorPage`), and Zelle, Apple Pay and PayPal.Me from the POS.
+  - Rules: `orders` is owner read only. New `events`, `eventStock`, `eventPrivate`, `trackers`, `waitlist`, `counters`, `settings/ordering`, `settings/orderingPrivate`. `settings/payments` is public read.
+- **Why:** Piece 2 of the V1 plan.
+- **Decisions:**
+  - The browser never writes an order. Every order change goes through the Worker, which checks the state table in `shared/orderState.ts`.
+  - A tracker document holds no email, phone or street address. The exact pickup address goes only in the paid email.
+  - `OrderRecord.stockHeld` records that an order took tamales from `eventStock`. Cancel returns them.
+  - `idempotencyKey` on `/api/v1/orders` makes a double submit return the first order. The order id is `sha256("order:{email}:{key}")`.
+  - "Pause mobile orders" also pauses the kiosk.
+  - POS sales keep the `POS-…` number. Only mobile and kiosk orders use `#N - Date - Name`.
+  - Fixed-allotment pre-orders are accepted without payment until piece 3 adds PayPal Checkout.
+- **Verify:** `npm run build` passes. Site tests: 169 pass. Worker tests: 154 pass. Worker type check and `wrangler deploy --dry-run` pass. Not verified: any screen in a browser; Web Audio, vibration, wake lock and clipboard on real phones; Firestore transactions, the Census geocoder and the rules against the real services.
+- **Next:** Piece 3, Money: PayPal Checkout, the online ordering fee, the 72-hour payment limit, one sales ledger, refunds.
+
 ### 2026-11-13 - Account setup for production
 
 - **Changed:** No code. Accounts only, all under `banginbustostamales@gmail.com`.

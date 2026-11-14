@@ -36,12 +36,7 @@ import { ChangePasswordForm } from "../components/ChangePasswordForm";
 import { ImagePicker } from "../components/ImagePicker";
 import { QRCodePanel } from "../components/QRCodePanel";
 import { apiConfigured, sendPosReceipt } from "../lib/api";
-import {
-  menuProducts,
-  availabilityWindows as starterAvailabilityWindows,
-  paymentSettings as initialPaymentSettings,
-  pickupLocations as starterPickupLocations
-} from "../data/fixtures";
+import { menuProducts, paymentSettings as initialPaymentSettings } from "../data/fixtures";
 import { useBusinessSettings } from "../lib/businessSettings";
 import { downloadCsv } from "../lib/csv";
 import {
@@ -59,9 +54,7 @@ import {
   savePosTicket,
   saveReportingSettings,
   saveTestMode,
-  seedAvailabilityWindowsIfEmpty,
   seedMenuItemsIfEmpty,
-  seedPickupLocationsIfEmpty,
   setPosTicketStatus,
   updatePosTicket,
   watchAppState,
@@ -180,13 +173,6 @@ export function AdminPage({ path }: AdminPageProps) {
   // so edits from then on persist to Firestore instead of reverting.
   useEffect(() => {
     seedMenuItemsIfEmpty(menuProducts).catch(() => undefined);
-  }, []);
-
-  // Same one-time seed for the availability windows and pickup locations
-  // collections, which were fixture-only before this feature.
-  useEffect(() => {
-    seedAvailabilityWindowsIfEmpty(starterAvailabilityWindows).catch(() => undefined);
-    seedPickupLocationsIfEmpty(starterPickupLocations).catch(() => undefined);
   }, []);
 
   // Payment accounts live in settings/payments; fixture values are only the

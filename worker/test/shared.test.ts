@@ -288,7 +288,8 @@ describe("order state table", () => {
     prepare: ["received"],
     ready: ["received", "preparing"],
     hand_over: ["ready"],
-    cancel: ["requested", "approved", "received", "preparing", "ready"]
+    cancel: ["requested", "approved", "received", "preparing", "ready"],
+    save_note: [...states]
   };
 
   it("allows and refuses each action from each state", () => {
@@ -408,11 +409,22 @@ describe("order state table", () => {
     expect(applyAction(order("preparing"), { action: "ready" }, now, settings).state).toBe("ready");
   });
 
-  it("knows which order holds event stock", () => {
-    const base = { kind: "preorder" as const, eventId: "ev1", approvedAtUtc: "" };
-    expect(holdsEventStock({ ...base, state: "received" })).toBe(true);
-    expect(holdsEventStock({ ...base, state: "requested" })).toBe(false);
-    expect(holdsEventStock({ ...base, state: "received", approvedAtUtc: "2026-11-13T00:00:00Z" })).toBe(false);
-    expect(holdsEventStock({ ...base, kind: "live", state: "received" })).toBe(false);
+  it("knows which order holds event stock from the stockHeld flag", () => {
+    expect(holdsEventStock({ stockHeld: true, eventId: "ev1" })).toBe(true);
+    expect(holdsEventStock({ stockHeld: false, eventId: "ev1" })).toBe(false);
+    expect(holdsEventStock({ stockHeld: true, eventId: "" })).toBe(false);
+  });
+
+  it("save note changes only the owner note, in every state", () => {
+    for (const state of states) {
+      expect(applyAction(order(state, "paid"), { action: "save_note", ownerNote: "Call first." }, now, settings)).toEqual({
+        updatedAtUtc: now,
+        ownerNote: "Call first."
+      });
+    }
+    expect(applyAction(order("ready"), { action: "save_note", reason: "x" }, now, settings)).toEqual({
+      updatedAtUtc: now,
+      ownerNote: ""
+    });
   });
 });

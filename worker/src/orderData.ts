@@ -144,7 +144,7 @@ const STATES = [
 export function readOrder(id: string, data: Data): OrderRecord | null {
   if (!KINDS.includes(str(data.kind)) || !STATES.includes(str(data.state))) return null;
   if (!Array.isArray(data.items) || !data.totals || !data.customer || !str(data.trackerToken)) return null;
-  return { ...(data as unknown as OrderRecord), id };
+  return { ...(data as unknown as OrderRecord), id, stockHeld: data.stockHeld === true };
 }
 
 /** 192 random bits as hex. The token is the key to the order tracker. */

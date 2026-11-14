@@ -28,7 +28,8 @@ const ACTIONS: OrderAction[] = [
   "prepare",
   "ready",
   "hand_over",
-  "cancel"
+  "cancel",
+  "save_note"
 ];
 const MAX_DELIVERY_FEE_CENTS = 100_000;
 
@@ -143,7 +144,10 @@ export async function runOrderAction(
       tx.set(stockPath, { remaining, updatedAtUtc: nowIso }, ["remaining", "updatedAtUtc"]);
     }
     tx.set(orderPath, changes as Record<string, unknown>, Object.keys(changes));
-    tx.set(`trackers/${updated.trackerToken}`, toTracker(updated) as unknown as Record<string, unknown>);
+    // The owner note is not on the tracker, so a saved note does not write it.
+    if (input.action !== "save_note") {
+      tx.set(`trackers/${updated.trackerToken}`, toTracker(updated) as unknown as Record<string, unknown>);
+    }
     return updated;
   });
 

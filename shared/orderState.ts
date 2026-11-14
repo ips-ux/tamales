@@ -36,6 +36,8 @@ export function canRunAction(order: StateFields, action: OrderAction): boolean {
       return order.kind === "live" && (state === "received" || state === "preparing");
     case "cancel":
       return !final;
+    case "save_note":
+      return true;
     default:
       return false;
   }
@@ -43,11 +45,10 @@ export function canRunAction(order: StateFields, action: OrderAction): boolean {
 
 /**
  * True for an order that took tamales from `eventStock` (a fixed-allotment pre-order).
- * A fixed-allotment pre-order is accepted with no approval. An open-interest pre-order
- * is "requested" first and has an approval time after that.
+ * The Worker sets `stockHeld` when it creates the order.
  */
-export function holdsEventStock(order: Pick<OrderRecord, "kind" | "state" | "approvedAtUtc" | "eventId">): boolean {
-  return order.kind === "preorder" && Boolean(order.eventId) && order.state !== "requested" && !order.approvedAtUtc;
+export function holdsEventStock(order: Pick<OrderRecord, "stockHeld" | "eventId">): boolean {
+  return order.stockHeld === true && Boolean(order.eventId);
 }
 
 export type ActionSettings = Pick<OrderingSettings, "paymentWindowHours" | "deliveryFeeTaxable"> & {
@@ -86,6 +87,11 @@ export function applyAction(
     throw new OrderError("This order cannot take this action now.");
   }
   const changes: OrderChanges = { updatedAtUtc: nowIso };
+  if (input.action === "save_note") {
+    // Only the owner note changes. The state, the payment and the totals stay.
+    changes.ownerNote = input.ownerNote ?? "";
+    return changes;
+  }
   if (input.ownerNote !== undefined) changes.ownerNote = input.ownerNote;
 
   switch (input.action) {

@@ -67,6 +67,13 @@ export function PreordersQueue() {
     }
   }
 
+  function saveNote(order: OrderRecord) {
+    actions.clearError();
+    const change = noteChange(order);
+    if (change.ownerNote === undefined) return;
+    void runAction(order, "save_note", { ownerNote: change.ownerNote });
+  }
+
   function start(order: OrderRecord, action: OrderAction) {
     actions.clearError();
     if (action === "approve" || action === "decline" || action === "cancel") {
@@ -205,26 +212,31 @@ export function PreordersQueue() {
               ))}
             </div>
 
-            {orderActions.length > 0 ? (
-              <label className="order-card-note">
-                Owner note
-                <textarea
-                  rows={2}
-                  maxLength={500}
-                  value={noteValue}
-                  disabled={busy}
-                  onChange={(event) => setNotes((current) => ({ ...current, [order.id]: event.target.value }))}
-                />
-                <span className="field-help">Customers do not see this note. Your next action saves it.</span>
-              </label>
-            ) : (
-              order.ownerNote && (
-                <p className="order-card-note">
-                  <strong>Owner note</strong>
-                  <span>{order.ownerNote}</span>
-                </p>
-              )
-            )}
+            <div className="order-card-note">
+              <label htmlFor={`owner-note-${order.id}`}>Owner note</label>
+              <textarea
+                id={`owner-note-${order.id}`}
+                rows={2}
+                maxLength={500}
+                value={noteValue}
+                disabled={busy}
+                aria-describedby={`owner-note-help-${order.id}`}
+                onChange={(event) => setNotes((current) => ({ ...current, [order.id]: event.target.value }))}
+              />
+              <span className="field-help" id={`owner-note-help-${order.id}`}>
+                Customers do not see this note.
+              </span>
+              <div className="button-row">
+                <button
+                  className="button button-small"
+                  type="button"
+                  disabled={busy || actions.running !== null || noteChange(order).ownerNote === undefined}
+                  onClick={() => saveNote(order)}
+                >
+                  {busy && actions.running?.action === "save_note" ? actionBusyLabels.save_note : actionLabels.save_note}
+                </button>
+              </div>
+            </div>
 
             {error && (
               <p className="form-notice form-notice-error" role="alert">

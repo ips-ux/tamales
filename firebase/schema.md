@@ -17,7 +17,7 @@ Money is in integer cents. Times are ISO 8601 text in UTC. A path with no rule i
 | `settings/orderingPrivate` | `OrderingPrivateSettings`: `startAddress`, `startLat`, `startLng`, `pickupAddress`, `pickupInstructions` | None | Read, write | Read, update `startLat` and `startLng` |
 | `settings/payments` | payment account names | Read | Read, write | None |
 | `settings/reporting`, `settings/app` | report inputs, test mode | None | Read, write | None |
-| `orders/{id}` | `OrderRecord`. The id is a random UUID. | Get by id (interim) | List, update, delete | Create, update |
+| `orders/{id}` | `OrderRecord`, with `stockHeld` true when the order took tamales from `eventStock`. The id is a random UUID, or a hash of the email address and the `idempotencyKey` of the request. | None | Read | Create, update |
 | `trackers/{trackerToken}` | `TrackerRecord`. No email address, phone number, or street address. | Get by token | Read | Create, update |
 | `counters/orders` | `next`: the next `BBT-####` sequence, from 1001. `updatedAtUtc` | None | Read, write | Read, write in a transaction |
 | `counters/live-{eventId}-{YYYY-MM-DD}` | `next`: the next live order number of that event day, from 1. The date is in the business time zone. | None | Read, write | Read, write in a transaction |
@@ -32,10 +32,10 @@ Money is in integer cents. Times are ISO 8601 text in UTC. A path with no rule i
 | `inventory/{productId}`, `inventoryAdjustments/{id}` | stock count, adjustment log | None | Read, write | None |
 | `expenses/{id}` | date, category, amount | None | Read, write | None |
 | `admins/{uid}` | `mustChangePassword` | None | Read, write | None |
-| `availabilityWindows/{id}`, `pickupLocations/{id}` | The old event model. `POST /api/orders` reads the first. Round 2 removes both. | Read | Read, write | Read |
 
 - The Worker issues each order number and changes `eventStock` in 1 transaction with the order and the tracker.
 - With no `eventStock/{eventId}` document, the Worker uses the `allotment` of the event as the count that remains.
-- A fixed-allotment pre-order that the owner cancels gives its tamales back to `eventStock`.
-- The public get on `orders` stays until round 2 removes the old confirmation page.
+- A fixed-allotment pre-order that the owner cancels or declines gives its tamales back to `eventStock`. The Worker reads `stockHeld` to know.
+- A second `POST /api/v1/orders` with the same `idempotencyKey` and email address returns the first order. It saves nothing and sends no email.
+- The owner changes an order only through `POST /api/admin/orders/action`. The action `save_note` changes only `ownerNote`.
 - The Worker does not change `marketingOptIn` from true to false.

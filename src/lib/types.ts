@@ -1,18 +1,6 @@
-export type FulfillmentType = "scheduled_pickup" | "event_pickup";
-
 export type ProductStatus = "active" | "inactive" | "sold_out";
 
 export type SpiceLevel = "mild" | "medium" | "hot";
-
-export type OrderStatus =
-  | "new"
-  | "confirmed"
-  | "preparing"
-  | "ready"
-  | "completed"
-  | "canceled";
-
-export type PaymentStatus = "unpaid" | "deposit_paid" | "paid" | "refunded";
 
 export interface BusinessSettings {
   id: string;
@@ -57,14 +45,11 @@ export interface MenuProduct {
   sortOrder: number;
 }
 
+/** Account names for the payment links. Public read: `settings/payments`. */
 export interface PaymentSettings {
   id: string;
   cashAppCashtag: string;
-  paypalMe: string;
   venmoHandle: string;
-  zelleContact: string;
-  applePayEnabled: boolean;
-  applePayNote: string;
 }
 
 export interface PosTicketItem {
@@ -86,124 +71,7 @@ export interface PosTicket {
   createdAtUtc: string;
 }
 
-export interface PickupLocation {
-  id: string;
-  name: string;
-  address: string;
-  instructions: string;
-  active: boolean;
-}
-
-export interface AvailabilityWindow {
-  id: string;
-  locationId: string;
-  label: string;
-  fulfillmentType: FulfillmentType;
-  startsAtUtc: string;
-  endsAtUtc: string;
-  cutoffAtUtc: string;
-  capacity: number;
-  committedOrders: number;
-  active: boolean;
-  /** Owner toggle: pre-orders open for this event, vs. in-person only. */
-  preordersEnabled: boolean;
-  instructions: string;
-  vendorSessionId?: string;
-}
-
-export interface CartSelection {
-  variantId: string;
-  productId: string;
-  quantity: number;
-}
-
-export interface CustomerInfo {
-  name: string;
-  mobile: string;
-  email: string;
-  preferredContact: "text" | "phone" | "email";
-  notes: string;
-}
-
-export interface BulkOrderInfo {
-  enabled: boolean;
-  occasion: string;
-  guestCount: string;
-  desiredReadyTime: string;
-  packagingRequest: string;
-  additionalInstructions: string;
-}
-
-export interface OrderLineSnapshot {
-  productId: string;
-  variantId: string;
-  productName: string;
-  variantLabel: string;
-  unitQuantity: number;
-  unitPriceCents: number;
-  quantity: number;
-  lineTotalCents: number;
-}
-
-export interface OrderTotals {
-  subtotalCents: number;
-  taxCents: number;
-  feeCents: number;
-  totalCents: number;
-}
-
-export interface OrderDraft {
-  fulfillmentType: FulfillmentType;
-  availabilityWindowId: string;
-  items: CartSelection[];
-  customer: CustomerInfo;
-  bulk: BulkOrderInfo;
-  idempotencyKey: string;
-  turnstileToken?: string;
-  vendorSessionToken?: string;
-}
-
-export interface OrderRecord {
-  id: string;
-  orderNumber: string;
-  publicToken: string;
-  status: OrderStatus;
-  paymentStatus: PaymentStatus;
-  fulfillmentType: FulfillmentType;
-  availabilityWindowId: string;
-  customer: CustomerInfo;
-  bulk: BulkOrderInfo;
-  items: OrderLineSnapshot[];
-  totals: OrderTotals;
-  createdAtUtc: string;
-  updatedAtUtc: string;
-  privateNotes: string;
-  vendorSessionId?: string;
-}
-
-export interface VendorSession {
-  id: string;
-  publicToken: string;
-  name: string;
-  eventLocation: string;
-  startsAtUtc: string;
-  endsAtUtc: string;
-  enabledProductIds: string[];
-  availabilityWindowId: string;
-  ordersEnabled: boolean;
-  contactCaptureEnabled: boolean;
-  active: boolean;
-  exitPinRequired: boolean;
-}
-
-export interface ContactSubmission {
-  id: string;
-  name: string;
-  contact: string;
-  preferredContact: "text" | "phone" | "email";
-  productInterest: string;
-  approximateQuantity: string;
-  consentToContact: boolean;
-  createdAtUtc: string;
-  source: "waitlist" | "contact" | "vendor";
-}
+/**
+ * The old pickup window. Only src/lib/time.ts still names this type.
+ * V1 uses `EventRecord` in shared/model.ts. Remove it when time.ts drops its window functions.
+ */

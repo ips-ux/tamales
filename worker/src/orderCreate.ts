@@ -5,6 +5,7 @@
 // It reads prices, the event, the settings and the tax rate from Firestore.
 // The order number and the fixed-allotment stock change in 1 Firestore transaction.
 
+import { sha256Hex } from "./base64";
 import { addToEmailList, upsertCustomer } from "./customers";
 import { quoteDelivery, MAX_ADDRESS_LENGTH, type Geocoder } from "./delivery";
 import { sendEmailSafely, type Mailer } from "./email";
@@ -17,6 +18,7 @@ import {
   menuFromDocs,
   newTrackerToken,
   readEvent,
+  readOrder,
   readOrdering,
   taxRateFrom,
   timeZoneFrom,
@@ -54,6 +56,22 @@ const KINDS: OrderKind[] = ["live", "preorder", "batch"];
 const SOURCES: OrderSource[] = ["web", "mobile", "kiosk"];
 const LIVE_METHODS: PaymentMethod[] = ["venmo", "cashapp", "cash"];
 const invalid = () => new HttpError(400, "The request is not valid.");
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** Reads the optional retry key. Returns undefined when the browser sent none. */
+function idempotencyKey(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string" || !IDEMPOTENCY_KEY.test(value)) throw invalid();
+  return value;
+}
+
+/**
+ * The order document id for a retry key. The email address is part of the hash,
+ * so a key alone does not find the order of a different customer.
+ */
+export async function orderIdForKey(key: string, customerEmail: string): Promise<string> {
+  return sha256Hex(`order:${customerEmail}:${key}`);
+}
 
 function requestedTime(value: unknown): OrderRequestedTime | null {
   if (value === undefined || value === null) return null;
@@ -120,7 +138,9 @@ export function validateCreateOrder(body: Record<string, unknown>): CreateOrderI
     paymentMethod = body.paymentMethod as PaymentMethod;
   }
 
+  const key = idempotencyKey(body.idempotencyKey);
   return {
+    ...(key ? { idempotencyKey: key } : {}),
     kind,
     source,
     eventId: needsEvent ? docId(body.eventId) : "",
@@ -184,7 +204,10 @@ function checkEvent(input: CreateOrderInput, event: EventRecord | null, now: Dat
   return event;
 }
 
-/** Validates, prices and saves the order. Sends the emails after the response. */
+/**
+ * Validates, prices and saves the order. Sends the emails after the response.
+ * With an `idempotencyKey`, a second call returns the first order and saves nothing.
+ */
 export async function createOrderV1(
   body: Record<string, unknown>,
   deps: CreateDeps,
@@ -193,6 +216,12 @@ export async function createOrderV1(
   const input = validateCreateOrder(body);
   const { db, cfg } = deps;
   const isBatch = input.kind === "batch";
+
+  // A retry of an order that the Worker saved before: return it, send no second email.
+  const fixedId = input.idempotencyKey ? await orderIdForKey(input.idempotencyKey, input.customer.email) : "";
+  const earlier = fixedId ? await db.get(`orders/${fixedId}`) : null;
+  const earlierOrder = earlier ? readOrder(fixedId, earlier) : null;
+  if (earlierOrder) return resultOf(earlierOrder);
 
   const [menuDocs, business, eventData, orderingData] = await Promise.all([
     db.list("menuItems"),
@@ -275,7 +304,17 @@ export async function createOrderV1(
   const firstSequence = isLive ? 1 : FIRST_RUNNING_SEQUENCE;
   const stockPath = `eventStock/${input.eventId}`;
 
+  const orderId = fixedId || crypto.randomUUID();
+  let duplicate = false;
   const order = await db.runTransaction(async (tx) => {
+    duplicate = false;
+    // A second submit can arrive while the first one is in this transaction.
+    const existing = fixedId ? await tx.get(`orders/${orderId}`) : null;
+    const existingOrder = existing ? readOrder(orderId, existing) : null;
+    if (existingOrder) {
+      duplicate = true;
+      return existingOrder;
+    }
     const counter = await tx.get(counterPath);
     const stock = isFixed ? await tx.get(stockPath) : null;
 
@@ -286,7 +325,7 @@ export async function createOrderV1(
       : runningOrderNumber(sequence);
 
     const record: OrderRecord = {
-      id: crypto.randomUUID(),
+      id: orderId,
       kind: input.kind,
       source: input.source,
       state: isLive || isFixed ? "received" : "requested",
@@ -313,7 +352,8 @@ export async function createOrderV1(
       createdAtUtc: nowIso,
       updatedAtUtc: nowIso,
       approvedAtUtc: "",
-      payByUtc: ""
+      payByUtc: "",
+      stockHeld: isFixed
     };
 
     if (isFixed && event) {
@@ -327,9 +367,14 @@ export async function createOrderV1(
     return record;
   });
 
+  if (duplicate) return resultOf(order);
   deps.defer(sendEmailSafely(deps.mailer, buildOrderReceivedEmail(order, timeZone, cfg)));
   if (order.state === "requested") {
     deps.defer(sendEmailSafely(deps.mailer, buildOrderAlertEmail(order, timeZone, cfg)));
   }
+  return resultOf(order);
+}
+
+function resultOf(order: OrderRecord): CreateOrderResult {
   return { trackerToken: order.trackerToken, orderNumber: order.orderNumber, state: order.state };
 }

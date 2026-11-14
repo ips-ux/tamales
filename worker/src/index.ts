@@ -15,7 +15,6 @@ import { requireAdmin } from "./idToken";
 import { buildContactEmail, buildReceiptEmail } from "./messages";
 import { runOrderAction } from "./orderAction";
 import { createOrderV1 } from "./orderCreate";
-import { createOrder } from "./orders";
 import { sha256Hex } from "./base64";
 import { validateContact, validateReceipt, validateSignup } from "./validate";
 import { joinWaitlist } from "./waitlist";
@@ -90,18 +89,6 @@ async function handleSignup(ctx: Context): Promise<unknown> {
   return {};
 }
 
-async function handleOrder(ctx: Context): Promise<unknown> {
-  const body = await readPublicForm(ctx);
-  if (!body) return {};
-  const order = await createOrder(body.order, {
-    db: database(ctx),
-    mailer: ctx.mailer,
-    cfg: ctx.cfg,
-    defer: ctx.defer
-  });
-  return { order };
-}
-
 async function handleReceipt(ctx: Context): Promise<unknown> {
   await requireAdmin(ctx.request.headers.get("Authorization"), ctx.cfg.projectId);
   const input = validateReceipt(await readJsonBody(ctx.request));
@@ -157,7 +144,6 @@ async function handleOrderAction(ctx: Context): Promise<unknown> {
 const POST_ROUTES: Record<string, (ctx: Context) => Promise<unknown>> = {
   "/api/contact": handleContact,
   "/api/signup": handleSignup,
-  "/api/orders": handleOrder,
   "/api/receipts": handleReceipt,
   "/api/v1/orders": handleOrderV1,
   "/api/v1/delivery-quote": handleDeliveryQuote,

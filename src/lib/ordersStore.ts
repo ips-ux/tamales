@@ -134,7 +134,8 @@ export function mapOrderDoc(id: string, data: Record<string, unknown>): OrderRec
     createdAtUtc: text(data.createdAtUtc),
     updatedAtUtc: text(data.updatedAtUtc),
     approvedAtUtc: text(data.approvedAtUtc),
-    payByUtc: text(data.payByUtc)
+    payByUtc: text(data.payByUtc),
+    stockHeld: data.stockHeld === true
   };
 }
 

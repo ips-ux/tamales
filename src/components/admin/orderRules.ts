@@ -69,7 +69,8 @@ export const actionLabels: Record<OrderAction, string> = {
   prepare: "Start",
   ready: "Mark Ready",
   hand_over: "Hand Over",
-  cancel: "Cancel Order"
+  cancel: "Cancel Order",
+  save_note: "Save Note"
 };
 
 /** The label a button shows while its action runs. */
@@ -81,7 +82,8 @@ export const actionBusyLabels: Record<OrderAction, string> = {
   prepare: "Starting...",
   ready: "Saving...",
   hand_over: "Saving...",
-  cancel: "Canceling..."
+  cancel: "Canceling...",
+  save_note: "Saving..."
 };
 
 const actionOrder: OrderAction[] = [
@@ -95,7 +97,7 @@ const actionOrder: OrderAction[] = [
   "cancel"
 ];
 
-/** The actions that the owner can run on this order now, in button order. */
+/** The state actions that the owner can run on this order now, in button order. "save_note" has its own button. */
 export function availableActions(order: OrderRecord): OrderAction[] {
   return actionOrder.filter((action) => canRunAction(order, action));
 }

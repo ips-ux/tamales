@@ -1016,6 +1016,97 @@ describe("owner order action", () => {
   });
 });
 
+describe("round 2: retry key, stock flag and owner note", () => {
+  it("returns the first order for a second submit with the same retry key", async () => {
+    const store = setup();
+    const body = liveBody({ idempotencyKey: "4f9c2b1e-7d3a-4c55-9a10-1b2c3d4e5f60" });
+    const first = await createOrderV1(body, store.deps, LIVE_TIME);
+    const second = await createOrderV1(body, store.deps, LIVE_TIME);
+    expect(second).toEqual(first);
+    expect(store.all("orders")).toHaveLength(1);
+    expect(store.docs.get("counters/live-ev1-2026-11-14")).toMatchObject({ next: 2 });
+    await store.done();
+    expect(store.sent).toHaveLength(1);
+
+    const other = await createOrderV1(liveBody({ idempotencyKey: "a-second-key" }), store.deps, LIVE_TIME);
+    expect(other.orderNumber).toBe("#2 - Nov 14 - Jane Doe");
+    const noKey = await createOrderV1(liveBody(), store.deps, LIVE_TIME);
+    expect(noKey.orderNumber).toBe("#3 - Nov 14 - Jane Doe");
+    expect(store.all("orders")).toHaveLength(3);
+  });
+
+  it("does not find the order of a different customer with the same key", async () => {
+    const store = setup();
+    const first = await createOrderV1(liveBody({ idempotencyKey: "same-key" }), store.deps, LIVE_TIME);
+    const other = await createOrderV1(
+      liveBody({ idempotencyKey: "same-key", customer: { ...customer, email: "sam@example.com" } }),
+      store.deps,
+      LIVE_TIME
+    );
+    expect(other.trackerToken).not.toBe(first.trackerToken);
+    expect(store.all("orders")).toHaveLength(2);
+  });
+
+  it("checks the retry key and leaves it out when absent", () => {
+    expect(validateCreateOrder(liveBody({ idempotencyKey: "abc_DEF-123" })).idempotencyKey).toBe("abc_DEF-123");
+    expect("idempotencyKey" in validateCreateOrder(liveBody())).toBe(false);
+    expect("idempotencyKey" in validateCreateOrder(liveBody({ idempotencyKey: "" }))).toBe(false);
+    for (const idempotencyKey of ["x".repeat(65), "a/b", "has space", 12]) {
+      expect(() => validateCreateOrder(liveBody({ idempotencyKey }))).toThrow("not valid");
+    }
+  });
+
+  it("does not take the fixed stock 2 times for a retry", async () => {
+    const store = setup();
+    const body = preorderBody({ eventId: "evFixed", idempotencyKey: "fixed-retry" });
+    await createOrderV1(body, store.deps, EARLY);
+    await createOrderV1(body, store.deps, EARLY);
+    expect(store.docs.get("eventStock/evFixed")).toMatchObject({ remaining: { red: 12, green: 6 } });
+  });
+
+  it("sets stockHeld on a fixed-allotment pre-order only", async () => {
+    const store = setup();
+    const fixed = await createOrderV1(preorderBody({ eventId: "evFixed" }), store.deps, EARLY);
+    const open = await createOrderV1(preorderBody(), store.deps, EARLY);
+    const live = await createOrderV1(liveBody(), store.deps, LIVE_TIME);
+    expect(orderOf(store, fixed.orderNumber).stockHeld).toBe(true);
+    expect(orderOf(store, open.orderNumber).stockHeld).toBe(false);
+    expect(orderOf(store, live.orderNumber).stockHeld).toBe(false);
+  });
+
+  it("an approved open-interest pre-order gives no stock back at cancel", async () => {
+    const store = setup({ "eventStock/ev1": { remaining: { red: 5 }, updatedAtUtc: "" } });
+    const created = await createOrderV1(preorderBody(), store.deps, EARLY);
+    const id = orderOf(store, created.orderNumber).id;
+    await runOrderAction({ orderId: id, action: "approve" }, store.deps, EARLY);
+    await runOrderAction({ orderId: id, action: "mark_paid" }, store.deps, EARLY);
+    await runOrderAction({ orderId: id, action: "cancel" }, store.deps, EARLY);
+    expect(store.docs.get("eventStock/ev1")).toEqual({ remaining: { red: 5 }, updatedAtUtc: "" });
+  });
+
+  it("save note changes the owner note in a final state, writes no tracker and sends no email", async () => {
+    const store = setup();
+    const created = await createOrderV1(liveBody(), store.deps, LIVE_TIME);
+    const id = orderOf(store, created.orderNumber).id;
+    await runOrderAction({ orderId: id, action: "hand_over" }, store.deps, LIVE_TIME);
+    await store.done();
+    store.sent.length = 0;
+    const trackerBefore = JSON.stringify(store.docs.get(`trackers/${created.trackerToken}`));
+
+    const { order } = await runOrderAction({ orderId: id, action: "save_note", ownerNote: "Paid in cash." }, store.deps, TODAY);
+    expect(order).toMatchObject({ state: "handed_over", ownerNote: "Paid in cash." });
+    expect(store.docs.get(`orders/${id}`)).toMatchObject({ state: "handed_over", ownerNote: "Paid in cash." });
+    expect(JSON.stringify(store.docs.get(`trackers/${created.trackerToken}`))).toBe(trackerBefore);
+    await store.done();
+    expect(store.sent).toHaveLength(0);
+    expect(validateOrderAction({ orderId: "a", action: "save_note", ownerNote: "x" })).toEqual({
+      orderId: "a",
+      action: "save_note",
+      ownerNote: "x"
+    });
+  });
+});
+
 describe("public routes", () => {
   const API = "https://bbt-api.example.workers.dev";
   const post = (path: string, body: unknown) =>

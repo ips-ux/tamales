@@ -262,6 +262,8 @@ export interface OrderRecord {
   approvedAtUtc: string;
   /** approvedAtUtc plus the payment window. Empty until approval. */
   payByUtc: string;
+  /** True when this order took tamales from eventStock. */
+  stockHeld: boolean;
 }
 
 /**
@@ -278,6 +280,7 @@ export interface TrackerRecord {
   firstName: string;
   eventName: string;
   fulfillment: Fulfillment;
+  /** `quantity` is the units of the line. The label carries the size, for example "Red Tamales, Half dozen". */
   items: Array<{ label: string; quantity: number }>;
   totals: OrderTotals;
   /** Reason for a decline or a cancel. */
@@ -325,6 +328,11 @@ export interface CreateOrderInput {
   /** Live only: "venmo", "cashapp" or "cash". Others send "unset". */
   paymentMethod: PaymentMethod;
   customerNote: string;
+  /**
+   * Optional. 1 to 64 characters: letters, digits, "-" and "_". The browser makes 1 key for each
+   * order attempt and sends it again on a retry. The Worker then returns the first order and makes no second one.
+   */
+  idempotencyKey?: string;
 }
 
 export interface CreateOrderResult {
@@ -369,7 +377,9 @@ export type OrderAction =
   | "prepare"
   | "ready"
   | "hand_over"
-  | "cancel";
+  | "cancel"
+  /** Allowed in every state. Changes only `ownerNote`. Sends no email. */
+  | "save_note";
 
 export interface OrderActionInput {
   orderId: string;

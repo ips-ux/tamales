@@ -19,6 +19,7 @@ import {
   query,
   runTransaction,
   updateDoc,
+  where,
   writeBatch
 } from "firebase/firestore";
 import { useEffect, useState } from "react";
@@ -108,6 +109,32 @@ export function watchEvents(
   return onSnapshot(
     query(collection(db(), EVENTS), orderBy("startsAtUtc")),
     (snapshot) => onData(snapshot.docs.map((item) => mapEventDoc(item.id, item.data()))),
+    (error) => onError(error)
+  );
+}
+
+/**
+ * The event of a kiosk link, live. `onData` receives null when no event has the token.
+ * The kiosk reads only this event, never the full list.
+ */
+export function watchEventByKioskToken(
+  kioskToken: string,
+  onData: (event: EventRecord | null) => void,
+  onError: (error: Error) => void
+): () => void {
+  if (!firebaseConfigured()) {
+    onError(new Error(NOT_CONFIGURED));
+    return () => undefined;
+  }
+  return onSnapshot(
+    query(collection(db(), EVENTS), where("kioskToken", "==", kioskToken)),
+    { includeMetadataChanges: true },
+    (snapshot) => {
+      const match = snapshot.docs[0];
+      // With no connection, Firestore answers from its cache first. Wait for the server.
+      if (!match && snapshot.metadata.fromCache) return;
+      onData(match ? mapEventDoc(match.id, match.data()) : null);
+    },
     (error) => onError(error)
   );
 }

@@ -11,8 +11,9 @@ service cloud.firestore {
       the service-account key, which is not subject to these rules.
 
       The owner reads and writes from the browser with the `admin: true`
-      custom claim. The public reads the menu, events, locations, business
-      settings, site content and site images directly.
+      custom claim. The public reads the menu, events, event stock, business
+      settings, order settings, payment account names, site content and site
+      images directly. A customer gets 1 tracker by its token.
     */
 
     function isAdmin() {
@@ -116,22 +117,6 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
-    // Pickup windows ("pop-up events") and pickup locations backing the
-    // pre-order form. There is no separate status doc — the customer site
-    // derives "next event" and whether pre-orders are open for it directly
-    // from these windows.
-    // Publicly readable so the customer site can show what's available;
-    // only the owner edits them from the admin Availability page.
-    match /availabilityWindows/{windowId} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-
-    match /pickupLocations/{locationId} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-
     // Stock levels and the adjustment audit log. Owner-only.
     match /inventory/{productId} {
       allow read, write: if isAdmin();
@@ -152,16 +137,12 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
-    // Orders. The Worker creates each order after it validates the request
-    // and computes the prices. The owner lists and updates orders.
-    // Interim rule: `get` stays public while the old confirmation page reads
-    // 1 order by its unguessable token. New orders have a random document id
-    // and use `trackers`. Round 2 of build piece 2 closes the public get.
+    // Orders. Owner read only. The Worker creates and changes each order
+    // with the service-account key: it checks the state table, computes the
+    // money and sends the email. A customer reads `trackers`, never an order.
     match /orders/{orderId} {
-      allow get: if true;
-      allow list: if isAdmin();
-      allow update, delete: if isAdmin();
-      allow create: if false;
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // Email list signups. The Worker creates them. Owner-only in the browser.
