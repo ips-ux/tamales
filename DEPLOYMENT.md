@@ -1,3 +1,6 @@
+> **Notice:** parts of this file are out of date; see `docs/V1_FUNDAMENTALS.md`.
+> V1 uses no Cloud Functions. A Cloudflare Worker handles public writes.
+
 # Deployment
 
 The app is hosted on **Firebase** (Hosting + Functions + Firestore + Auth). GitHub
