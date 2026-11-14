@@ -1,0 +1,259 @@
+/* Public site styles added in build piece 1: footer, Contact, 404. Tokens come from global.css. */
+
+/* Page frame: the footer stays at the bottom on a short page. */
+.public-frame {
+  display: flex;
+  flex-direction: column;
+  min-height: 100svh;
+}
+
+.public-frame > main {
+  flex: 1 0 auto;
+}
+
+/* Honeypot. Off-screen, not display:none, so automated tools still fill it. */
+.hp-field {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.turnstile-box {
+  min-height: 65px;
+  margin-top: 1rem;
+}
+
+/* Links in running text. */
+.legal-copy a,
+.text-link {
+  font-weight: 700;
+  color: var(--red-dark);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.legal-copy ul {
+  margin: 0 0 1rem;
+  padding-left: 1.5rem;
+  line-height: 1.65;
+}
+
+.legal-contact {
+  margin-top: 2rem;
+  margin-bottom: 0;
+}
+
+/* Allergen notice: menu preview and the order flow. */
+.allergen-notice {
+  margin: 1.5rem 0 0;
+  padding: 1rem;
+  color: var(--agave-dark);
+  background: #fffaf1;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.order-panel .allergen-notice {
+  margin: 0 0 1rem;
+}
+
+/* Home */
+.hero-next-event {
+  grid-template-columns: minmax(0, 28rem);
+}
+
+.menu-preview-card .status-badge {
+  margin-top: 0.25rem;
+}
+
+/* About */
+.about-story {
+  max-width: 62ch;
+}
+
+/* Contact */
+.contact-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 2rem;
+  align-items: start;
+}
+
+.contact-form {
+  padding: 1.5rem;
+  background: #fffaf1;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.field-count {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 400;
+}
+
+.updates-form .error-summary {
+  margin-bottom: 0;
+}
+
+/* Centered cards: confirmations and the 404 page. */
+.card-actions {
+  justify-content: center;
+}
+
+.confirmation-number {
+  font-size: 1.2rem;
+}
+
+.not-found {
+  text-align: center;
+}
+
+.not-found h1 {
+  margin-right: auto;
+  margin-left: auto;
+}
+
+/* Footer */
+.site-footer {
+  position: relative;
+  color: var(--cream);
+  background: var(--charcoal);
+}
+
+.site-footer::before {
+  display: block;
+  height: 6px;
+  content: "";
+  background: linear-gradient(90deg, var(--red) 0 33.4%, var(--masa) 33.4% 66.7%, var(--agave) 66.7%);
+}
+
+.site-footer-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  gap: 2rem;
+  align-items: start;
+  width: min(1180px, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 2rem 0;
+}
+
+.site-footer-blurb {
+  margin-bottom: 0.5rem;
+  font-weight: 900;
+}
+
+.site-footer-contact {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.site-footer-contact a,
+.site-footer-nav a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.site-footer-contact a:hover,
+.site-footer-nav a:hover {
+  color: var(--masa);
+}
+
+.site-footer-contact svg {
+  flex: 0 0 auto;
+  color: var(--masa);
+}
+
+.site-footer-nav {
+  display: grid;
+  min-width: 8rem;
+}
+
+.site-footer-nav a {
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.footer-signup label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 900;
+}
+
+.footer-signup-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.footer-signup-row input {
+  flex: 1 1 12rem;
+  min-height: 48px;
+}
+
+.footer-signup-button {
+  color: var(--charcoal);
+  background: var(--cream-2);
+}
+
+.footer-signup-button:hover:not(:disabled) {
+  background: var(--cream);
+}
+
+.footer-signup-error {
+  margin: 0.75rem 0 0;
+  padding: 0.75rem;
+  color: var(--red-dark);
+  font-weight: 700;
+  background: #fff0ea;
+  border-radius: var(--radius);
+}
+
+.footer-signup-done {
+  margin: 0;
+  font-weight: 900;
+}
+
+@media (max-width: 920px) {
+  .hero-section .hero-content {
+    padding-bottom: 8.5rem;
+  }
+
+  .hero-next-event {
+    grid-template-columns: 1fr;
+  }
+
+  .contact-layout,
+  .site-footer-inner {
+    grid-template-columns: 1fr;
+  }
+
+  .site-footer-inner {
+    gap: 1.5rem;
+  }
+}
+
+@media (max-width: 600px) {
+  .contact-form {
+    padding: 1rem;
+  }
+
+  .card-actions .button,
+  .not-found .button,
+  .footer-signup-button {
+    width: 100%;
+  }
+
+  .footer-signup-row input {
+    flex-basis: 100%;
+  }
+}

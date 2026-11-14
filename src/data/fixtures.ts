@@ -1,7 +1,6 @@
 import type {
   AvailabilityWindow,
   BusinessSettings,
-  ContactSubmission,
   MenuProduct,
   PaymentSettings,
   OrderRecord,
@@ -15,12 +14,13 @@ export const businessSettings: BusinessSettings = {
   shortName: "Bangin Bustos",
   timezone: "America/Denver",
   orderPolicy:
-    "Order requests are reviewed by the owner. Your order is not final until it is confirmed by text, call, or email.",
+    "We confirm each pre-order and each batch request before we make it.",
   paymentPolicy:
-    "Payment is collected after confirmation. Large batches may require a deposit before production.",
-  contactPhone: "(720) 555-0186",
-  contactEmail: "orders@banginbustos.example",
-  instagramHandle: "@banginbustostamales",
+    "You pay online after we confirm your order. We start the batch after we receive your payment.",
+  contactPhone: "720-360-8688",
+  contactEmail: "banginbustostamales@gmail.com",
+  // Empty until the owner supplies a handle; the site links to "#" meanwhile.
+  instagramHandle: "",
   taxRateBps: 870
 };
 
@@ -49,7 +49,7 @@ export const menuProducts: MenuProduct[] = [
     description: "Slow-cooked red chile pork folded into tender masa and wrapped in corn husk.",
     ingredients: ["corn masa", "pork", "red chile", "garlic", "spices"],
     spiceLevel: "medium",
-    allergyNotice: "Contains corn. Prepared in a home-style kitchen that may handle common allergens.",
+    allergyNotice: "Contains corn. We make all items in one kitchen.",
     imageUrl: "/media/chile_red.webp",
     singlePriceCents: 350,
     status: "active",
@@ -86,7 +86,7 @@ export const menuProducts: MenuProduct[] = [
     description: "Roasted green chile chicken with bright salsa verde flavor and soft masa.",
     ingredients: ["corn masa", "chicken", "green chile", "tomatillo", "cilantro", "spices"],
     spiceLevel: "mild",
-    allergyNotice: "Contains corn. Prepared in a home-style kitchen that may handle common allergens.",
+    allergyNotice: "Contains corn. We make all items in one kitchen.",
     imageUrl: "/media/pork_green.webp",
     singlePriceCents: 350,
     status: "active",
@@ -172,7 +172,7 @@ export const paymentSettings: PaymentSettings = {
   cashAppCashtag: "BanginBustos",
   paypalMe: "banginbustos",
   venmoHandle: "banginbustos",
-  zelleContact: "orders@banginbustos.example",
+  zelleContact: "banginbustostamales@gmail.com",
   applePayEnabled: false,
   applePayNote: "Apple Pay needs a merchant/payment-service setup before live use."
 };
@@ -277,19 +277,5 @@ export const sampleOrders: OrderRecord[] = [
     createdAtUtc: "2026-06-16T15:05:00.000Z",
     updatedAtUtc: "2026-06-17T03:10:00.000Z",
     privateNotes: "Deposit received by cash app."
-  }
-];
-
-export const contactSubmissions: ContactSubmission[] = [
-  {
-    id: "contact_001",
-    name: "Elena Cruz",
-    contact: "(720) 555-0166",
-    preferredContact: "text",
-    productInterest: "Green tamales",
-    approximateQuantity: "2 dozen",
-    consentToContact: true,
-    createdAtUtc: "2026-06-17T20:20:00.000Z",
-    source: "waitlist"
   }
 ];

@@ -1,11 +1,12 @@
 node_modules/
 dist/
-functions/lib/
 .vite/
 .npm-cache/
 .secrets/
 .vite-dev*.log
 .dev.vars
+worker/.dev.vars
+.wrangler/
 .env
 .env.*
 !.env.example

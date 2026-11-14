@@ -1,0 +1,17 @@
+# Bangin Bustos Tamales API. The only door for public writes. It sends all email.
+# Secrets are not in this file. Set them with `npx wrangler secret put <NAME>`:
+#   FIREBASE_SERVICE_ACCOUNT, RESEND_API_KEY, TURNSTILE_SECRET_KEY
+name = "bbt-api"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[observability]
+enabled = true
+
+[vars]
+FIREBASE_PROJECT_ID = "bustostamale"
+PUBLIC_SITE_ORIGIN = "https://bustostamales.com"
+ALLOWED_ORIGINS = "https://bustostamales.com,https://www.bustostamales.com,https://bustostamale.web.app,http://127.0.0.1:5173,http://localhost:5173"
+EMAIL_FROM = "Bangin Bustos Tamales <orders@bustostamales.com>"
+OWNER_EMAIL = "banginbustostamales@gmail.com"

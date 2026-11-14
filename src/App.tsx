@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
+import { SiteFooter } from "./components/SiteFooter";
 import { SiteHeader } from "./components/SiteHeader";
 import { PosModeHeader } from "./components/PosModeHeader";
 import { AdminGate } from "./components/AdminGate";
 import { AboutPage } from "./pages/AboutPage";
 import { AdminPage } from "./pages/AdminPage";
 import { ConfirmationPage } from "./pages/ConfirmationPage";
+import { ContactPage } from "./pages/ContactPage";
 import { HomePage } from "./pages/HomePage";
 import { LegalPage } from "./pages/LegalPage";
 import { LoginPage } from "./pages/LoginPage";
+import { NotFoundPage } from "./pages/NotFoundPage";
 import { OrderPage } from "./pages/OrderPage";
 import { UpdatesPage } from "./pages/UpdatesPage";
 import { VendorPage } from "./pages/VendorPage";
@@ -43,10 +46,12 @@ export function App() {
   const confirmationToken = route.match(/^\/order\/confirmation\/([^/]+)$/)?.[1];
   const vendorToken = route.match(/^\/vendor\/([^/]+)$/)?.[1];
 
-  let page = <HomePage />;
-  if (route === "/order") page = <OrderPage />;
+  let page = <NotFoundPage />;
+  if (route === "/") page = <HomePage />;
+  else if (route === "/order") page = <OrderPage />;
   else if (confirmationToken) page = <ConfirmationPage publicToken={confirmationToken} />;
   else if (route === "/about") page = <AboutPage />;
+  else if (route === "/contact") page = <ContactPage />;
   else if (route === "/login") page = <LoginPage />;
   else if (route === "/updates") page = <UpdatesPage />;
   else if (route === "/privacy") page = <LegalPage kind="privacy" />;
@@ -60,11 +65,22 @@ export function App() {
     );
   }
 
+  // The kiosk has no header and no footer. Admin has a header and no footer.
+  if (isVendor && vendorToken) return page;
+  if (isAdmin) {
+    return (
+      <>
+        {isPosMode ? <PosModeHeader path={route} /> : <SiteHeader isAdmin />}
+        {page}
+      </>
+    );
+  }
+
   return (
-    <>
-      {!isVendor &&
-        (isPosMode ? <PosModeHeader path={route} /> : <SiteHeader isAdmin={isAdmin} />)}
+    <div className="public-frame">
+      <SiteHeader />
       {page}
-    </>
+      <SiteFooter />
+    </div>
   );
 }

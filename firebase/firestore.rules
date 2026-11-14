@@ -3,14 +3,16 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     /*
-      Bangin Bustos Tamales runs on the free Firebase Spark plan, so there is no
-      Cloud Functions / Admin SDK layer. The owner-only Live POS reads and writes
-      Firestore directly from the browser, gated by the `admin: true` custom claim.
+      Everything is denied by default. Only the collections matched below are
+      reachable.
 
-      Everything is denied by default. Only collections explicitly matched below
-      are reachable, and only by an authenticated admin. The public preorder flow
-      is intentionally not exposed here yet; add narrowly-scoped rules for it when
-      that surface goes live.
+      Public writes do not exist. The Cloudflare Worker in worker/ is the only
+      door for orders, contact messages and email list signups. It writes with
+      the service-account key, which is not subject to these rules.
+
+      The owner reads and writes from the browser with the `admin: true`
+      custom claim. The public reads the menu, events, locations, business
+      settings, site content and site images directly.
     */
 
     function isAdmin() {
@@ -96,62 +98,44 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
-    // Public pre-order requests. Customers create exactly one well-shaped
-    // order whose id is its unguessable publicToken; the confirmation link
-    // fetches by that token (get), while listing and status changes stay
-    // owner-only. Totals are advisory — the owner confirms every request.
+    // Pre-orders. The Worker creates each order after it validates the
+    // request and computes the prices. The owner lists and updates orders.
+    // `get` stays public for now: the confirmation page reads 1 order by its
+    // unguessable token (the document id). Build piece 2 replaces this with
+    // `trackers` documents and closes the public get.
     match /orders/{orderId} {
       allow get: if true;
       allow list: if isAdmin();
       allow update, delete: if isAdmin();
-      allow create: if request.resource.data.keys().hasOnly([
-          'orderNumber', 'publicToken', 'status', 'paymentStatus',
-          'fulfillmentType', 'availabilityWindowId', 'customer', 'bulk',
-          'items', 'totals', 'createdAtUtc', 'updatedAtUtc', 'privateNotes',
-          'vendorSessionId'
-        ])
-        && request.resource.data.publicToken == orderId
-        && request.resource.data.status == 'new'
-        && request.resource.data.paymentStatus == 'unpaid'
-        && request.resource.data.privateNotes == ''
-        && request.resource.data.orderNumber is string
-        && request.resource.data.orderNumber.size() <= 40
-        && request.resource.data.customer is map
-        && request.resource.data.customer.name is string
-        && request.resource.data.customer.name.size() >= 1
-        && request.resource.data.customer.name.size() <= 120
-        && request.resource.data.customer.email is string
-        && request.resource.data.customer.email.size() >= 5
-        && request.resource.data.customer.email.size() <= 200
-        && request.resource.data.customer.email.matches('.+@.+\\..+')
-        && request.resource.data.customer.mobile is string
-        && request.resource.data.customer.mobile.size() >= 7
-        && request.resource.data.customer.mobile.size() <= 40
-        && request.resource.data.customer.preferredContact in ['text', 'phone', 'email']
-        && request.resource.data.items is list
-        && request.resource.data.items.size() >= 1
-        && request.resource.data.items.size() <= 40
-        && request.resource.data.totals is map
-        && request.resource.data.totals.totalCents is int
-        && request.resource.data.totals.totalCents >= 0
-        && request.resource.data.totals.totalCents <= 500000
-        && request.resource.data.createdAtUtc is string
-        && request.resource.data.createdAtUtc.size() <= 40;
+      allow create: if false;
     }
 
-    // Self-service signups from the public /updates landing page. Anyone can
-    // create exactly one well-shaped signup document; only the owner can read
-    // the list, so the collection can't be harvested.
+    // Email list signups. The Worker creates them. Owner-only in the browser.
     match /marketingSignups/{signupId} {
-      allow read, update, delete: if isAdmin();
-      allow create: if request.resource.data.keys().hasOnly(['email', 'source', 'createdAtUtc'])
-        && request.resource.data.email is string
-        && request.resource.data.email.size() >= 5
-        && request.resource.data.email.size() <= 200
-        && request.resource.data.email.matches('.+@.+\\..+')
-        && request.resource.data.source == 'landing'
-        && request.resource.data.createdAtUtc is string
-        && request.resource.data.createdAtUtc.size() <= 40;
+      allow read, write: if isAdmin();
+    }
+
+    // Owner-editable site text (hero, About, How It Works, policies, footer).
+    match /siteContent/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Owner photos in fixed slots. 1 document for each slot.
+    match /siteImages/{slot} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Contact form messages. The Worker creates them. Contains customer PII.
+    match /contactMessages/{messageId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Customer records, keyed by a hash of the email address. The Worker
+    // creates and updates them. Contains customer PII.
+    match /customers/{customerId} {
+      allow read, write: if isAdmin();
     }
 
     // Default deny for anything not matched above.

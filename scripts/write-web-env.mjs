@@ -1,34 +1,11 @@
-import { GoogleAuth } from "google-auth-library";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { cert } from "firebase-admin/app";
+import { readFile, writeFile } from "node:fs/promises";
+import { readServiceAccount } from "./lib/service-account.mjs";
 
-const rootDir = new URL("../../", import.meta.url);
+const rootDir = new URL("../", import.meta.url);
 const envPath = new URL(".env.local", rootDir);
-const secretsDir = new URL(".secrets/", rootDir);
 const createIfMissing = process.argv.includes("--create-if-missing");
 const displayName = "Bangin Bustos Tamales Web";
-
-async function readServiceAccount() {
-  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-    return JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
-  }
-
-  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    return JSON.parse(await readFile(process.env.GOOGLE_APPLICATION_CREDENTIALS, "utf8"));
-  }
-
-  const files = await readdir(secretsDir).catch(() => []);
-  const candidates = files.filter((file) => file.endsWith(".json"));
-  for (const file of candidates) {
-    const body = await readFile(new URL(file, secretsDir), "utf8");
-    const parsed = JSON.parse(body);
-    if (parsed.type === "service_account" && parsed.project_id && parsed.private_key) {
-      return parsed;
-    }
-  }
-
-  console.error("No Firebase service-account JSON found. Set GOOGLE_APPLICATION_CREDENTIALS or place it in .secrets/.");
-  process.exit(1);
-}
 
 function mergeEnv(existing, updates) {
   const seen = new Set();
@@ -51,15 +28,19 @@ function mergeEnv(existing, updates) {
 
 const serviceAccount = await readServiceAccount();
 const projectId = process.env.FIREBASE_PROJECT_ID ?? serviceAccount.project_id;
-const auth = new GoogleAuth({
-  credentials: serviceAccount,
-  scopes: ["https://www.googleapis.com/auth/cloud-platform", "https://www.googleapis.com/auth/firebase"]
-});
-const client = await auth.getClient();
+const credential = cert(serviceAccount);
 
 async function firebaseRequest(url, options = {}) {
-  const response = await client.request({ url, ...options });
-  return response.data;
+  const { access_token: accessToken } = await credential.getAccessToken();
+  const response = await fetch(url, {
+    method: options.method ?? "GET",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: options.data ? JSON.stringify(options.data) : undefined
+  });
+  if (!response.ok) {
+    throw new Error(`Firebase request failed (${response.status}): ${await response.text()}`);
+  }
+  return response.json();
 }
 
 async function listWebApps() {

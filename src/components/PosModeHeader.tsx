@@ -12,7 +12,7 @@ const posModeTabs = [
 
 // The bespoke shell a cashier lives in once they step into Live POS mode —
 // deliberately stripped down to just the two tabs they need at the register,
-// with one clear way back to the full owner backend.
+// with one clear way back to Admin.
 export function PosModeHeader({ path }: PosModeHeaderProps) {
   return (
     <header className="pos-mode-header">
@@ -45,7 +45,7 @@ export function PosModeHeader({ path }: PosModeHeaderProps) {
         onClick={() => navigate("/admin")}
       >
         <ArrowLeft size={18} aria-hidden="true" />
-        Admin Backend
+        Back to Admin
       </button>
     </header>
   );

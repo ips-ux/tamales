@@ -1,3 +1,6 @@
+> **Superseded for V1.** `docs/V1_FUNDAMENTALS.md` and `docs/V1_DESIGN.md` replace this file.
+> This file stays for history only.
+
 # Project Handoff
 
 ## Current State

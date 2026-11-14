@@ -1,6 +1,7 @@
 import { CheckCircle2, ClipboardList } from "lucide-react";
 import { useEffect, useState } from "react";
-import { navigate } from "../App";
+import { firstName } from "../components/publicForm";
+import { SiteLink } from "../components/SiteFooter";
 import { useAvailabilityWindows, usePickupLocations } from "../lib/availabilityStore";
 import { fetchOrderByToken } from "../lib/firestoreClient";
 import { formatMoney } from "../lib/money";
@@ -52,9 +53,9 @@ export function ConfirmationPage({ publicToken }: { publicToken: string }) {
     return (
       <main className="page-shell narrow">
         <section className="empty-state">
-          <ClipboardList size={42} />
-          <h1>Looking up your order</h1>
-          <p>One moment…</p>
+          <ClipboardList size={42} aria-hidden="true" />
+          <h1 className="sr-only">Your order</h1>
+          <p role="status">Finding your order.</p>
         </section>
       </main>
     );
@@ -64,12 +65,12 @@ export function ConfirmationPage({ publicToken }: { publicToken: string }) {
     return (
       <main className="page-shell narrow">
         <section className="empty-state">
-          <ClipboardList size={42} />
-          <h1>Confirmation not found</h1>
-          <p>Check the link or start a new request.</p>
-          <button className="button button-primary" type="button" onClick={() => navigate("/order")}>
+          <ClipboardList size={42} aria-hidden="true" />
+          <h1>Order not found.</h1>
+          <p>Check the link in your email, or place a new order.</p>
+          <SiteLink className="button button-primary" href="/order">
             Place an Order
-          </button>
+          </SiteLink>
         </section>
       </main>
     );
@@ -78,13 +79,12 @@ export function ConfirmationPage({ publicToken }: { publicToken: string }) {
   return (
     <main className="page-shell narrow">
       <section className="confirmation-card">
-        <CheckCircle2 size={48} className="success-icon" />
-        <p className="eyebrow">Request Received</p>
-        <h1>{order.orderNumber}</h1>
-        <p>
-          Thanks, {order.customer.name}! Your request is in the owner queue. You will receive a
-          confirmation through your preferred contact method before the order is final.
+        <CheckCircle2 size={48} className="success-icon" aria-hidden="true" />
+        <h1>Thanks, {firstName(order.customer.name)}!</h1>
+        <p className="confirmation-number">
+          Order number <strong>{order.orderNumber}</strong>
         </p>
+        <p>We have your order. We will send you an email when we approve it.</p>
         <div className="summary-lines">
           {order.items.map((line) => (
             <div key={line.variantId}>
@@ -97,7 +97,7 @@ export function ConfirmationPage({ publicToken }: { publicToken: string }) {
         </div>
         <div className="summary-totals">
           <div className="grand-total">
-            <span>Estimated total</span>
+            <span>Total</span>
             <strong>{formatMoney(order.totals.totalCents)}</strong>
           </div>
         </div>

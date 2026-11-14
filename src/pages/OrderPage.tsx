@@ -1,26 +1,26 @@
 import { ArrowLeft, ArrowRight, Check, CircleAlert } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { navigate } from "../App";
 import { OrderSummary } from "../components/OrderSummary";
 import { ProductCard } from "../components/ProductCard";
+import {
+  HoneypotField,
+  TURNSTILE_WAIT_MESSAGE,
+  TurnstileWidget,
+  turnstileEnabled,
+  type TurnstileHandle
+} from "../components/TurnstileWidget";
+import { ApiError, sendOrder } from "../lib/api";
 import { useAvailabilityWindows, usePickupLocations } from "../lib/availabilityStore";
-import { useBusinessSettings } from "../lib/businessSettings";
-import { receiptEmailConfigured, sendReceiptEmail } from "../lib/emailReceipt";
-import { submitPublicOrder } from "../lib/firestoreClient";
 import { useMenuProducts } from "../lib/menuStore";
-import { formatMoney } from "../lib/money";
+import { useSiteContent } from "../lib/siteContent";
 import {
   createLocalOrderRecord,
   generateIdempotencyKey,
   isPreorderable,
   orderItemCount
 } from "../lib/order";
-import {
-  formatBusinessDateTime,
-  formatWindow,
-  isWindowSelectable,
-  nextAvailableWindows
-} from "../lib/time";
+import { formatWindow, isWindowSelectable, nextAvailableWindows } from "../lib/time";
 import type {
   BulkOrderInfo,
   CartSelection,
@@ -30,7 +30,7 @@ import type {
   OrderRecord
 } from "../lib/types";
 
-const steps = ["Fulfillment", "Time", "Products", "Contact", "Review"];
+const steps = ["Type", "Date", "Menu", "Contact", "Review"];
 
 const emptyCustomer: CustomerInfo = {
   name: "",
@@ -63,7 +63,7 @@ function quantityMapToSelections(
 }
 
 export function OrderPage() {
-  const businessSettings = useBusinessSettings();
+  const content = useSiteContent();
   const menuProducts = useMenuProducts();
   const availabilityWindows = useAvailabilityWindows();
   const pickupLocations = usePickupLocations();
@@ -75,6 +75,9 @@ export function OrderPage() {
   const [bulk, setBulk] = useState<BulkOrderInfo>(emptyBulk);
   const [errors, setErrors] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [website, setWebsite] = useState("");
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const turnstileRef = useRef<TurnstileHandle>(null);
 
   const preorderProducts = useMemo(
     () => menuProducts.filter((product) => isPreorderable(product)),
@@ -116,17 +119,17 @@ export function OrderPage() {
     // entry to the step after the one that fulfills them — so choosing a
     // window is required to leave the Time step, not to reach it.
     if (nextStep >= 2 && (!selectedWindow || !isWindowSelectable(selectedWindow))) {
-      nextErrors.push("Choose an available pickup window.");
+      nextErrors.push("Select a date that is open.");
     }
     if (nextStep >= 3 && orderItemCount(activeSelections) === 0) {
-      nextErrors.push("Choose at least one tamale package.");
+      nextErrors.push("Select a minimum of 1 menu item.");
     }
     if (nextStep >= 4) {
-      if (!customer.name.trim()) nextErrors.push("Name is required.");
-      if (!customer.mobile.trim()) nextErrors.push("Mobile number is required.");
-      if (!customer.email.trim()) nextErrors.push("Email is required.");
+      if (!customer.name.trim()) nextErrors.push("Enter your name.");
+      if (!customer.mobile.trim()) nextErrors.push("Enter your mobile number.");
+      if (!customer.email.trim()) nextErrors.push("Enter your email address.");
       if (bulk.enabled && !bulk.guestCount.trim()) {
-        nextErrors.push("Guest count is required for bulk order details.");
+        nextErrors.push("Enter the number of people.");
       }
     }
     return nextErrors;
@@ -148,6 +151,10 @@ export function OrderPage() {
     const nextErrors = validate(steps.length - 1);
     setErrors(nextErrors);
     if (nextErrors.length > 0 || !selectedWindow) return;
+    if (turnstileEnabled() && !turnstileToken) {
+      setErrors([TURNSTILE_WAIT_MESSAGE]);
+      return;
+    }
 
     setSubmitting(true);
     const draft = {
@@ -159,51 +166,36 @@ export function OrderPage() {
       idempotencyKey: generateIdempotencyKey()
     };
 
-    let record: OrderRecord;
+    let saved: OrderRecord;
     try {
-      record = createLocalOrderRecord(draft, menuProducts);
-      await submitPublicOrder(record);
-    } catch {
-      setErrors(["Your request could not be submitted. Check your connection and try again."]);
+      const record = createLocalOrderRecord(draft, menuProducts);
+      // The Worker computes the totals again and issues the order number and
+      // the public token. Use its copy from here on.
+      const result = await sendOrder({ order: record, turnstileToken, website });
+      if (!result.order) throw new ApiError("We could not send your order. Reload the page, then try again.", 400);
+      saved = result.order;
+    } catch (caught) {
+      setErrors([
+        caught instanceof ApiError
+          ? caught.message
+          : "We could not send your order. Check your connection, then try again."
+      ]);
+      turnstileRef.current?.reset();
       setSubmitting(false);
       return;
     }
 
-    // Confirmation email is best-effort — never block the order on it.
-    if (receiptEmailConfigured() && record.customer.email) {
-      sendReceiptEmail({
-        toEmail: record.customer.email,
-        businessName: businessSettings.name,
-        ticketNumber: record.orderNumber,
-        purchasedAt: formatBusinessDateTime(record.createdAtUtc),
-        items: record.items.map((line) => ({
-          name: `${line.productName} — ${line.variantLabel}`,
-          quantity: line.quantity,
-          unitPrice: formatMoney(line.unitPriceCents),
-          lineTotal: formatMoney(line.lineTotalCents)
-        })),
-        subtotal: formatMoney(record.totals.subtotalCents),
-        tax: formatMoney(record.totals.taxCents),
-        total: formatMoney(record.totals.totalCents),
-        paymentMethod: "Pay at pickup",
-        customerName: record.customer.name,
-        heading: "Order Request",
-        footerNote: `This is an order request — ${businessSettings.shortName} will confirm by text, call, or email before it's final.`
-      }).catch(() => undefined);
-    }
-
     // Keep a local copy so the confirmation page renders instantly.
-    sessionStorage.setItem(`bbt-order-${record.publicToken}`, JSON.stringify(record));
+    sessionStorage.setItem(`bbt-order-${saved.publicToken}`, JSON.stringify(saved));
     setSubmitting(false);
-    navigate(`/order/confirmation/${record.publicToken}`);
+    navigate(`/order/confirmation/${saved.publicToken}`);
   }
 
   return (
     <main className="page-shell order-page">
       <section className="order-heading">
-        <p className="eyebrow">Order Request</p>
-        <h1>Build your tamale batch.</h1>
-        <p>{businessSettings.orderPolicy}</p>
+        <h1>Build your order.</h1>
+        <p>{content.orderPolicy}</p>
       </section>
 
       <form className="order-layout" onSubmit={submitOrder}>
@@ -219,21 +211,18 @@ export function OrderPage() {
 
           {errors.length > 0 && (
             <div className="error-summary" role="alert">
-              <CircleAlert size={20} />
-              <div>
-                <strong>Check a few things</strong>
-                <ul>
-                  {errors.map((error) => (
-                    <li key={error}>{error}</li>
-                  ))}
-                </ul>
-              </div>
+              <CircleAlert size={20} aria-hidden="true" />
+              <ul>
+                {errors.map((error) => (
+                  <li key={error}>{error}</li>
+                ))}
+              </ul>
             </div>
           )}
 
           {step === 0 && (
             <fieldset className="choice-grid">
-              <legend>Choose fulfillment</legend>
+              <legend>Select an order type</legend>
               <label>
                 <input
                   type="radio"
@@ -242,8 +231,8 @@ export function OrderPage() {
                   onChange={() => setFulfillmentType("scheduled_pickup")}
                 />
                 <span>
-                  <strong>Scheduled pickup</strong>
-                  <small>Preorder for an owner-confirmed pickup window.</small>
+                  <strong>Pickup</strong>
+                  <small>Pick up your order at a set date and time.</small>
                 </span>
               </label>
               <label>
@@ -254,8 +243,8 @@ export function OrderPage() {
                   onChange={() => setFulfillmentType("event_pickup")}
                 />
                 <span>
-                  <strong>Event or pop-up pickup</strong>
-                  <small>Order for a vendor table or temporary pickup event.</small>
+                  <strong>Pop-up event</strong>
+                  <small>Place a pre-order, then pick it up at a pop-up.</small>
                 </span>
               </label>
             </fieldset>
@@ -264,10 +253,9 @@ export function OrderPage() {
           {step === 1 && bookableWindows.length === 0 && (
             <div className="choice-grid">
               <p className="muted">
-                We're not currently taking new requests for this option.
                 {upcomingWindows.length > 0
-                  ? " Here are the next openings — check back once one is up:"
-                  : " Check back soon for upcoming pickup windows."}
+                  ? "No dates are open for this order type. These dates open soon:"
+                  : "No events are on the calendar. Check back soon."}
               </p>
               {upcomingWindows.map((window) => {
                 const location = pickupLocations.find((item) => item.id === window.locationId);
@@ -284,7 +272,7 @@ export function OrderPage() {
 
           {step === 1 && bookableWindows.length > 0 && (
             <fieldset className="choice-grid">
-              <legend>Choose a pickup window</legend>
+              <legend>Select a date</legend>
               {visibleWindows.map((window) => {
                 const location = pickupLocations.find((item) => item.id === window.locationId);
                 const disabled = !isWindowSelectable(window);
@@ -300,12 +288,18 @@ export function OrderPage() {
                     <span>
                       <strong>{window.label}</strong>
                       <small>{formatWindow(window)}</small>
-                      <small>{location?.name} · {window.capacity - window.committedOrders} spots left</small>
+                      <small>{location?.name} · {window.capacity - window.committedOrders} orders left</small>
                     </span>
                   </label>
                 );
               })}
             </fieldset>
+          )}
+
+          {step === 2 && (
+            <p className="allergen-notice">
+              <strong>Allergen notice.</strong> {content.allergenNotice}
+            </p>
           )}
 
           {step === 2 && (
@@ -328,15 +322,18 @@ export function OrderPage() {
               <label>
                 Name
                 <input
+                  type="text"
                   value={customer.name}
                   onChange={(event) => setCustomer({ ...customer, name: event.target.value })}
                   autoComplete="name"
+                  required
                 />
               </label>
               <label>
                 Mobile number
                 <input
                   type="tel"
+                  inputMode="tel"
                   value={customer.mobile}
                   onChange={(event) => setCustomer({ ...customer, mobile: event.target.value })}
                   autoComplete="tel"
@@ -344,9 +341,10 @@ export function OrderPage() {
                 />
               </label>
               <label>
-                Email
+                Email address
                 <input
                   type="email"
+                  inputMode="email"
                   value={customer.email}
                   onChange={(event) => setCustomer({ ...customer, email: event.target.value })}
                   autoComplete="email"
@@ -354,7 +352,7 @@ export function OrderPage() {
                 />
               </label>
               <label>
-                Preferred contact
+                Contact method
                 <select
                   value={customer.preferredContact}
                   onChange={(event) =>
@@ -383,7 +381,7 @@ export function OrderPage() {
                   checked={bulk.enabled}
                   onChange={(event) => setBulk({ ...bulk, enabled: event.target.checked })}
                 />
-                <span>Include bulk-order details</span>
+                <span>Add details for a large order</span>
               </label>
               {bulk.enabled && (
                 <>
@@ -395,7 +393,7 @@ export function OrderPage() {
                     />
                   </label>
                   <label>
-                    Guest count
+                    Number of people
                     <input
                       value={bulk.guestCount}
                       onChange={(event) => setBulk({ ...bulk, guestCount: event.target.value })}
@@ -403,7 +401,7 @@ export function OrderPage() {
                     />
                   </label>
                   <label>
-                    Desired ready time
+                    Time you need the order
                     <input
                       value={bulk.desiredReadyTime}
                       onChange={(event) =>
@@ -412,7 +410,7 @@ export function OrderPage() {
                     />
                   </label>
                   <label>
-                    Packaging request
+                    Packaging notes
                     <input
                       value={bulk.packagingRequest}
                       onChange={(event) =>
@@ -421,7 +419,7 @@ export function OrderPage() {
                     />
                   </label>
                   <label className="full-span">
-                    Additional instructions
+                    Other instructions
                     <textarea
                       value={bulk.additionalInstructions}
                       onChange={(event) =>
@@ -455,13 +453,15 @@ export function OrderPage() {
                   <br />
                   {customer.mobile} · {customer.email}
                   <br />
-                  Preferred: {customer.preferredContact}
+                  Contact method: {customer.preferredContact}
                 </p>
               </section>
               <section className="review-card">
-                <h2>Confirmation Policy</h2>
-                <p>{businessSettings.paymentPolicy}</p>
+                <h2>Payment</h2>
+                <p>{content.paymentPolicy}</p>
               </section>
+              <HoneypotField value={website} onChange={setWebsite} />
+              <TurnstileWidget ref={turnstileRef} onToken={setTurnstileToken} />
             </div>
           )}
 
@@ -479,7 +479,7 @@ export function OrderPage() {
               </button>
             ) : (
               <button className="button button-primary" type="submit" disabled={submitting}>
-                {submitting ? "Sending..." : "Submit Request"}
+                {submitting ? "Sending..." : "Place Order"}
                 <ArrowRight size={18} />
               </button>
             )}

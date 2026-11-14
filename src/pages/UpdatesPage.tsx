@@ -1,25 +1,44 @@
-import { Flame, Mail, PartyPopper } from "lucide-react";
-import { FormEvent, useState } from "react";
-import { navigate } from "../App";
-import { addMarketingSignup } from "../lib/firestoreClient";
+import { CheckCircle2, Mail } from "lucide-react";
+import { type FormEvent, useRef, useState } from "react";
+import { validateSignupEmail } from "../components/publicForm";
+import { SiteLink } from "../components/SiteFooter";
+import {
+  HoneypotField,
+  TURNSTILE_WAIT_MESSAGE,
+  TurnstileWidget,
+  turnstileEnabled,
+  type TurnstileHandle
+} from "../components/TurnstileWidget";
+import { ApiError, sendSignup } from "../lib/api";
 
 export function UpdatesPage() {
+  const [email, setEmail] = useState(
+    () => new URLSearchParams(window.location.search).get("email") ?? ""
+  );
+  const [website, setWebsite] = useState("");
+  const [token, setToken] = useState("");
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const prefill = new URLSearchParams(window.location.search).get("email") ?? "";
+  const turnstileRef = useRef<TurnstileHandle>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const email = String(new FormData(event.currentTarget).get("email") ?? "").trim();
-    if (!email) return;
+    const problem =
+      validateSignupEmail(email) || (turnstileEnabled() && !token ? TURNSTILE_WAIT_MESSAGE : "");
+    setError(problem);
+    if (problem) return;
     setBusy(true);
-    setError("");
     try {
-      await addMarketingSignup(email);
+      await sendSignup({ email: email.trim(), source: "landing", turnstileToken: token, website });
       setDone(true);
-    } catch {
-      setError("That didn't go through. Give it another shot in a second.");
+    } catch (caught) {
+      setError(
+        caught instanceof ApiError
+          ? caught.message
+          : "We could not add you to the email list. Check your connection, then try again."
+      );
+      turnstileRef.current?.reset();
     } finally {
       setBusy(false);
     }
@@ -28,32 +47,29 @@ export function UpdatesPage() {
   return (
     <main className="page-shell narrow">
       {done ? (
-        <section className="confirmation-card">
-          <PartyPopper size={42} className="success-icon" />
-          <h1>You're on the list!</h1>
-          <p className="large-copy">
-            Great choice. You'll be first to know when the next batch drops — pop-up dates,
-            preorder windows, and the occasional special. That's it. No junk, just tamales.
-          </p>
-          <div className="order-actions">
-            <button className="button button-primary" type="button" onClick={() => navigate("/order")}>
-              Place an Order
-            </button>
-            <button className="button button-ghost" type="button" onClick={() => navigate("/")}>
+        <section className="confirmation-card" role="status">
+          <CheckCircle2 size={48} className="success-icon" aria-hidden="true" />
+          <h1>You are on the list!</h1>
+          <p className="large-copy">We will send you the date of the next pop-up.</p>
+          <div className="order-actions card-actions">
+            <SiteLink className="button button-ghost" href="/">
               Back to Home
-            </button>
+            </SiteLink>
+            <SiteLink className="button button-primary" href="/order">
+              Place an Order
+            </SiteLink>
           </div>
         </section>
       ) : (
         <section className="confirmation-card">
-          <Flame size={42} className="success-icon" />
-          <p className="eyebrow">The Batch List</p>
-          <h1>Never miss a batch.</h1>
-          <p className="large-copy">
-            Small batches sell out fast. Get first dibs on pop-up dates, preorder windows, and
-            specials — straight to your inbox. Zero spam, all tamales.
-          </p>
-          <form className="updates-form" onSubmit={handleSubmit}>
+          <h1>Join the email list.</h1>
+          <p className="large-copy">We send pop-up dates and pre-order news. We send nothing else.</p>
+          <form className="updates-form" onSubmit={handleSubmit} noValidate>
+            {error && (
+              <div className="error-summary" role="alert">
+                {error}
+              </div>
+            )}
             <label>
               Email address
               <input
@@ -61,24 +77,20 @@ export function UpdatesPage() {
                 type="email"
                 inputMode="email"
                 autoComplete="email"
-                defaultValue={prefill}
-                placeholder="you@example.com"
+                maxLength={254}
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
                 required
               />
             </label>
-            {error && (
-              <p className="form-notice form-notice-error" role="alert">
-                {error}
-              </p>
-            )}
+            <HoneypotField value={website} onChange={setWebsite} />
+            <TurnstileWidget ref={turnstileRef} onToken={setToken} />
             <button className="button button-primary" type="submit" disabled={busy}>
-              <Mail size={18} />
-              {busy ? "Signing you up…" : "Sign Me Up"}
+              <Mail size={18} aria-hidden="true" />
+              {busy ? "Sending..." : "Sign Up"}
             </button>
           </form>
-          <p className="muted updates-fine-print">
-            We only send the good stuff. Unsubscribe anytime by replying to any email.
-          </p>
+          <p className="muted updates-fine-print">To leave the email list, reply to an email from us.</p>
         </section>
       )}
     </main>

@@ -68,7 +68,7 @@ const POS_COLLECTION = "posTickets";
 // online — essential for selling at markets. initializeFirestore can only run
 // once per app; fall back to getFirestore if it was already created (e.g. HMR).
 let dbInstance: Firestore | null = null;
-function db(): Firestore {
+export function db(): Firestore {
   const app = getFirebaseApp();
   if (!dbInstance) {
     try {
@@ -578,11 +578,10 @@ export async function seedPickupLocationsIfEmpty(locations: PickupLocation[]): P
 }
 
 // ---------------------------------------------------------------------------
-// Public pre-orders. Order requests are written by unauthenticated customers
-// as create-only documents whose id is the unguessable publicToken, so the
-// confirmation link can fetch exactly one order and nothing else. The owner
-// reviews and confirms every request before it's final, so client-computed
-// totals are advisory, not trusted.
+// Orders. The Worker creates each order (src/lib/api.ts sendOrder); the
+// browser does not write to this collection for a customer. The document id
+// is the unguessable publicToken, so the confirmation link can fetch exactly
+// one order and nothing else.
 // ---------------------------------------------------------------------------
 
 const ORDERS_COLLECTION = "orders";
@@ -596,17 +595,6 @@ function mapOrderDoc(id: string, data: Record<string, unknown>): OrderRecord {
     items: Array.isArray(data.items) ? record.items : [],
     privateNotes: (data.privateNotes as string) ?? ""
   };
-}
-
-export async function submitPublicOrder(order: OrderRecord): Promise<void> {
-  if (!firebaseConfigured()) {
-    throw new Error("Ordering is temporarily unavailable. Please try again shortly.");
-  }
-  const { id, vendorSessionId, ...data } = order;
-  await setDoc(doc(db(), ORDERS_COLLECTION, order.publicToken), {
-    ...data,
-    vendorSessionId: vendorSessionId ?? ""
-  });
 }
 
 export async function fetchOrderByToken(publicToken: string): Promise<OrderRecord | null> {
@@ -875,9 +863,8 @@ export function watchReceiptContacts(
   );
 }
 
-// Self-service marketing signups from the public /updates landing page (the
-// second-chance CTA at the bottom of receipt emails points there). Signing up
-// is implicit opt-in. Public create-only; rules validate the exact shape.
+// Email list signups from the public site. The Worker creates each document
+// (src/lib/api.ts sendSignup); the owner reads them here.
 export interface MarketingSignupRecord {
   id: string;
   email: string;
@@ -886,17 +873,6 @@ export interface MarketingSignupRecord {
 }
 
 const MARKETING_SIGNUPS_COLLECTION = "marketingSignups";
-
-export async function addMarketingSignup(email: string): Promise<void> {
-  if (!firebaseConfigured()) {
-    throw new Error("Signups are not available right now. Please try again later.");
-  }
-  await addDoc(collection(db(), MARKETING_SIGNUPS_COLLECTION), {
-    email: email.trim().toLowerCase(),
-    source: "landing",
-    createdAtUtc: new Date().toISOString()
-  });
-}
 
 export function watchMarketingSignups(
   onData: (signups: MarketingSignupRecord[]) => void,
@@ -927,6 +903,88 @@ export function watchMarketingSignups(
     },
     (error) => onError(error)
   );
+}
+
+// ---------------------------------------------------------------------------
+// Contact messages from the public Contact form. The Worker creates each
+// document; only the owner can read, update, or delete it (Firestore rules).
+// ---------------------------------------------------------------------------
+
+export interface ContactMessageRecord {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  /** Optional. Empty when the customer gave no phone. */
+  phone: string;
+  message: string;
+  createdAtUtc: string;
+  read: boolean;
+}
+
+const CONTACT_MESSAGES_COLLECTION = "contactMessages";
+
+export function watchContactMessages(
+  onData: (messages: ContactMessageRecord[]) => void,
+  onError: (error: Error) => void
+): () => void {
+  if (!firebaseConfigured()) {
+    onError(new Error("Firebase is not configured."));
+    return () => undefined;
+  }
+  const messagesQuery = query(
+    collection(db(), CONTACT_MESSAGES_COLLECTION),
+    orderBy("createdAtUtc", "desc")
+  );
+  return onSnapshot(
+    messagesQuery,
+    (snapshot) => {
+      onData(
+        snapshot.docs.map((docSnapshot) => {
+          const data = docSnapshot.data();
+          return {
+            id: docSnapshot.id,
+            firstName: (data.firstName as string) ?? "",
+            lastName: (data.lastName as string) ?? "",
+            email: (data.email as string) ?? "",
+            phone: (data.phone as string) ?? "",
+            message: (data.message as string) ?? "",
+            createdAtUtc: (data.createdAtUtc as string) ?? new Date().toISOString(),
+            read: Boolean(data.read)
+          } satisfies ContactMessageRecord;
+        })
+      );
+    },
+    (error) => onError(error)
+  );
+}
+
+// Count for the nav badge. A filtered query, like watchNewPreorderCount.
+export function watchUnreadContactMessageCount(
+  onCount: (count: number) => void,
+  onError: (error: Error) => void
+): () => void {
+  if (!firebaseConfigured()) {
+    onError(new Error("Firebase is not configured."));
+    return () => undefined;
+  }
+  const unreadQuery = query(
+    collection(db(), CONTACT_MESSAGES_COLLECTION),
+    where("read", "==", false)
+  );
+  return onSnapshot(
+    unreadQuery,
+    (snapshot) => onCount(snapshot.size),
+    (error) => onError(error)
+  );
+}
+
+export async function setContactMessageRead(id: string, read: boolean): Promise<void> {
+  await updateDoc(doc(db(), CONTACT_MESSAGES_COLLECTION, id), { read });
+}
+
+export async function deleteContactMessage(id: string): Promise<void> {
+  await deleteDoc(doc(db(), CONTACT_MESSAGES_COLLECTION, id));
 }
 
 /**
