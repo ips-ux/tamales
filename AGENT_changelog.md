@@ -25,6 +25,19 @@ Agreed on 2026-11-13 by the developer and the owner. Do not change these without
 
 ## Unreleased
 
+### 2026-11-13 - Account setup for production
+
+- **Changed:** No code. Accounts only, all under `banginbustostamales@gmail.com`.
+  - Cloudflare: Email Routing sends `orders@bustostamales.com` to the owner's Gmail. Turnstile widget "Bangin Bustos site forms" covers `bustostamales.com` and `bustostamale.web.app`.
+  - Cloudflare DNS: A record and TXT record for Firebase Hosting; Resend records `resend._domainkey`, `rsend`, `send`, `_dmarc`. All are "DNS only".
+  - Firebase: the owner's Gmail is invited as Owner. `bustostamales.com` is a Hosting custom domain and an authorized Auth domain.
+  - Resend: domain `bustostamales.com` is verified.
+  - Worker `bbt-api` is deployed at `https://bbt-api.bbt-api.workers.dev` with its 3 secrets set.
+- **Why:** Piece 1 needs real accounts before it can send email or accept a form.
+- **Decisions:** Resend DNS was set by hand; Resend has no access to the Cloudflare account. Cloudflare Email Sending needs the paid Workers plan, so Resend stays. The Resend receiving MX record was not added, because Cloudflare Email Routing owns inbound mail.
+- **Verify:** Worker `GET /api/health` returns 200. A POST with no Turnstile token gets 400, a POST from an unknown origin gets 403, and `/api/receipts` with no token gets 401. Not verified: a write to Firestore and a sent email, because both need a real form submit from the deployed site.
+- **Next:** Add GitHub secrets `VITE_API_BASE_URL`, `VITE_TURNSTILE_SITE_KEY`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`. Add `www.bustostamales.com`. Merge to `main`, then send 1 contact message as the end-to-end test.
+
 ### 2026-11-13 - Build piece 1: Foundation
 
 - **Changed:**

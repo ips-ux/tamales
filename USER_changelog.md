@@ -15,6 +15,14 @@ If a note needs nothing from you, it says so.
 - A PayPal Business account.
 - Your sign-ins for Cloudflare, Resend and Firebase during setup. You type them in yourself.
 
+## 2026-11-13 - Your accounts are connected
+
+- Your website name, bustostamales.com, now points at your site. It goes live after a short security step finishes.
+- Email to orders@bustostamales.com now arrives in your Gmail.
+- Your site can now send email from orders@bustostamales.com.
+- The server that receives orders and messages is running.
+- You are invited as an owner of the app's database. Open the email from Google and accept it.
+
 ## 2026-11-13 - The foundation is built
 
 - Your site has new pages: Contact, a footer on each page, Privacy, Terms, and a "page not found" page.
