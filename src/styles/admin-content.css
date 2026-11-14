@@ -131,3 +131,443 @@
     margin-left: 0;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Build piece 2: events, order queues, ordering settings, print.      */
+/* ------------------------------------------------------------------ */
+
+.field-help {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* Events list */
+.event-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.event-list h2 {
+  margin: 1rem 0 0;
+  font-size: 1.25rem;
+}
+
+.event-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 1rem;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.event-card-main {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.event-card-main strong {
+  font-size: 1.2rem;
+}
+
+.event-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+/* Event form */
+.event-form {
+  max-width: 840px;
+}
+
+.event-form h2 {
+  margin-bottom: 1rem;
+}
+
+.event-form-group {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.event-form-group legend {
+  padding: 0;
+  font-weight: 900;
+}
+
+.event-form-group .toggle-row {
+  min-height: 44px;
+  font-weight: 400;
+}
+
+.event-form .event-form-allotment {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8rem;
+  gap: 1rem;
+  align-items: center;
+  font-weight: 400;
+}
+
+.event-form-pin {
+  display: grid;
+  gap: 0.5rem;
+  justify-items: start;
+}
+
+/* Event page */
+.event-summary {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.event-summary h2,
+.event-summary-line {
+  margin: 0;
+}
+
+.event-links {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.event-link {
+  display: grid;
+  gap: 0.5rem;
+  justify-items: start;
+  align-content: start;
+}
+
+.event-link .qr-panel {
+  width: 100%;
+}
+
+.event-link .qr-image {
+  width: min(280px, 100%);
+}
+
+.event-link .button-small {
+  min-height: 44px;
+}
+
+.qr-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* Prep sheet and pickup list */
+.sheet-title {
+  margin: 0 0 0.5rem;
+  font-weight: 900;
+}
+
+.sheet-scroll {
+  overflow-x: auto;
+}
+
+.sheet-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.sheet-table th,
+.sheet-table td {
+  padding: 0.5rem 0.75rem 0.5rem 0;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+}
+
+.sheet-table thead th {
+  color: var(--muted);
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+/* Order cards (Pre-Orders queue) */
+.order-card-contact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 1rem;
+}
+
+.order-card-contact a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  color: var(--agave-dark);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.order-card-facts {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+}
+
+.order-card-facts div {
+  display: grid;
+  grid-template-columns: 10rem minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+.order-card-facts dt {
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.order-card-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.receipt-line.order-card-line {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.order-card-note {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  font-weight: 900;
+}
+
+.order-card-note span {
+  font-weight: 400;
+}
+
+.order-card-actions .button-small,
+.live-order-actions .button-small {
+  min-height: 48px;
+  padding: 0.75rem 1rem;
+}
+
+.order-dialog label {
+  display: grid;
+  gap: 0.5rem;
+  font-weight: 900;
+}
+
+/* Live POS orders screen */
+.live-orders-screen {
+  grid-template-columns: 1fr;
+}
+
+.live-controls {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.live-controls h2 {
+  margin: 0;
+}
+
+.live-control-row {
+  min-height: 56px;
+  font-weight: 900;
+}
+
+.live-control-items {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 1rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.live-control-items legend {
+  padding: 0;
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.live-order-group {
+  margin-top: 1rem;
+}
+
+.live-order-group h3,
+.live-order-group summary {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 900;
+}
+
+.live-order-group summary {
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.receipt-head .live-order-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+
+.live-order-number {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.live-order-items {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.live-order-pay {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+
+.live-order-note {
+  margin: 0;
+  color: var(--muted);
+}
+
+.pos-tab-badge {
+  color: var(--charcoal);
+  background: var(--masa);
+}
+
+/* Ordering settings */
+.ordering-settings label {
+  display: grid;
+  gap: 0.5rem;
+  font-weight: 900;
+}
+
+.ring-editor {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ring-editor legend {
+  padding: 0;
+  font-weight: 900;
+}
+
+.ring-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.ring-editor > .button-small {
+  justify-self: start;
+  min-height: 44px;
+}
+
+/* Print: only the copy that print.ts adds to the page is printed. */
+.print-root {
+  display: none;
+}
+
+@media print {
+  body > *:not(.print-root) {
+    display: none !important;
+  }
+
+  body {
+    background: #fff !important;
+  }
+
+  .print-root {
+    display: block;
+    color: #000;
+  }
+
+  .print-root .sheet-scroll {
+    overflow: visible;
+  }
+
+  .print-root .sheet-title {
+    font-size: 1.5rem;
+  }
+
+  .print-root .qr-panel {
+    position: static;
+    display: grid;
+    justify-items: center;
+    gap: 2rem;
+    padding: 2rem 0;
+    text-align: center;
+    background: none;
+    border: 0;
+    box-shadow: none;
+  }
+
+  .print-root .qr-actions,
+  .print-root .brand-logo {
+    display: none;
+  }
+
+  .print-root .qr-header,
+  .print-root .brand-lockup {
+    display: block;
+  }
+
+  .print-root .brand-lockup strong {
+    display: block;
+    font-size: 3rem;
+    line-height: 1.1;
+  }
+
+  .print-root .brand-lockup small {
+    display: block;
+    margin-top: 0.5rem;
+    font-size: 1.5rem;
+  }
+
+  .print-root .qr-image {
+    width: 80%;
+    max-width: none;
+    border: 0;
+  }
+}
+
+@media (max-width: 600px) {
+  .event-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .event-card-badges {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: flex-start;
+  }
+
+  .event-links,
+  .live-control-items {
+    grid-template-columns: 1fr;
+  }
+
+  .order-card-facts div {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .order-card-actions .button-small,
+  .live-order-actions .button-small {
+    flex: 1 1 calc(50% - 0.55rem);
+  }
+}

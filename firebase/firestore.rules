@@ -50,8 +50,62 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
-    // Payment accounts for the POS QR checkout. Owner-only.
+    // Payment account names (Venmo, Cash App). Public read: the phone of the
+    // customer builds the payment link from them. Only the owner edits them.
     match /settings/payments {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Order settings: pickup and delivery switches, delivery rings and fees,
+    // batch request limits. Public read. No address is in this document.
+    match /settings/ordering {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Delivery start address and the exact batch pickup address. Owner only.
+    // The Worker reads it with the service-account key.
+    match /settings/orderingPrivate {
+      allow read, write: if isAdmin();
+    }
+
+    // Events. Public read, so the site shows them. Only the owner edits them.
+    // An event holds the area name, never the exact address.
+    match /events/{eventId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Tamales that remain for fixed-allotment pre-orders. Public read.
+    // The Worker changes the counts in a transaction. The owner can set them.
+    match /eventStock/{eventId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // The exact pickup address of an event. Owner only. The Worker sends it
+    // to the customer in the payment receipt.
+    match /eventPrivate/{eventId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Order tracker. The document id is an unguessable token. Public get by
+    // token, no public list. Only the Worker writes it. It holds no email
+    // address, no phone number and no street address.
+    match /trackers/{token} {
+      allow get: if true;
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    // Waitlist entries. The Worker creates them. Contains customer PII.
+    match /waitlist/{entryId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Order number counters. The Worker changes them in a transaction.
+    match /counters/{counterId} {
       allow read, write: if isAdmin();
     }
 
@@ -98,11 +152,11 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
-    // Pre-orders. The Worker creates each order after it validates the
-    // request and computes the prices. The owner lists and updates orders.
-    // `get` stays public for now: the confirmation page reads 1 order by its
-    // unguessable token (the document id). Build piece 2 replaces this with
-    // `trackers` documents and closes the public get.
+    // Orders. The Worker creates each order after it validates the request
+    // and computes the prices. The owner lists and updates orders.
+    // Interim rule: `get` stays public while the old confirmation page reads
+    // 1 order by its unguessable token. New orders have a random document id
+    // and use `trackers`. Round 2 of build piece 2 closes the public get.
     match /orders/{orderId} {
       allow get: if true;
       allow list: if isAdmin();

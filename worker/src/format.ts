@@ -57,3 +57,10 @@ export function dateKey(date: Date, timeZone: string): string {
     day: "2-digit"
   }).format(date);
 }
+
+/** "Sat, Nov 14" for the calendar date "2026-11-14". */
+export function formatDateKey(dateKeyText: string): string {
+  const date = new Date(`${dateKeyText}T12:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKeyText) || Number.isNaN(date.getTime())) return dateKeyText;
+  return formatDay(date, "UTC");
+}

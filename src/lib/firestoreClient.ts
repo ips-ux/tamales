@@ -33,13 +33,8 @@ import type {
   PosTicketItem
 } from "./types";
 
-export type PosPaymentMethod =
-  | "cash"
-  | "cashapp"
-  | "paypal"
-  | "venmo"
-  | "zelle"
-  | "applepay";
+/** The methods a new POS sale can use. PayPal Checkout arrives in build piece 3. */
+export type PosPaymentMethod = "cash" | "cashapp" | "venmo";
 
 export interface NewPosTicket {
   items: PosTicketItem[];
@@ -53,8 +48,10 @@ export interface NewPosTicket {
   isTest: boolean;
 }
 
-export interface PosTicketRecord extends NewPosTicket {
+export interface PosTicketRecord extends Omit<NewPosTicket, "paymentMethod"> {
   id: string;
+  /** A stored value. An old sale can hold a method that is removed now, for example "zelle". */
+  paymentMethod: string;
   ticketNumber: string;
   status: "paid" | "void";
   soldByEmail: string | null;
@@ -243,7 +240,7 @@ export function watchPosTickets(
           subtotalCents: (data.subtotalCents as number) ?? 0,
           taxCents: (data.taxCents as number) ?? 0,
           totalCents: (data.totalCents as number) ?? 0,
-          paymentMethod: (data.paymentMethod as PosPaymentMethod) ?? "cash",
+          paymentMethod: typeof data.paymentMethod === "string" ? data.paymentMethod : "cash",
           customerName: (data.customerName as string) ?? "",
           isTest: Boolean(data.isTest),
           status: (data.status as "paid" | "void") ?? "paid",
@@ -312,11 +309,7 @@ export async function saveBusinessSettings(settings: EditableBusinessSettings): 
 // only the signed-in POS reads them.
 export interface EditablePaymentSettings {
   cashAppCashtag: string;
-  paypalMe: string;
   venmoHandle: string;
-  zelleContact: string;
-  applePayEnabled: boolean;
-  applePayNote: string;
 }
 
 const PAYMENT_SETTINGS_DOC = "payments";
@@ -339,11 +332,7 @@ export function watchPaymentSettings(
       }
       const settings: Partial<EditablePaymentSettings> = {};
       if (typeof data.cashAppCashtag === "string") settings.cashAppCashtag = data.cashAppCashtag;
-      if (typeof data.paypalMe === "string") settings.paypalMe = data.paypalMe;
       if (typeof data.venmoHandle === "string") settings.venmoHandle = data.venmoHandle;
-      if (typeof data.zelleContact === "string") settings.zelleContact = data.zelleContact;
-      if (typeof data.applePayEnabled === "boolean") settings.applePayEnabled = data.applePayEnabled;
-      if (typeof data.applePayNote === "string") settings.applePayNote = data.applePayNote;
       onData(settings);
     },
     (error) => onError(error)
@@ -362,7 +351,8 @@ export interface PosTicketUpdate {
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
-  paymentMethod: PosPaymentMethod;
+  /** A current method, or the stored value of an old sale that the owner did not change. */
+  paymentMethod: string;
   customerName: string;
 }
 
@@ -622,8 +612,9 @@ export function watchOrders(
   );
 }
 
-// Lightweight count for the nav badge — a filtered query instead of loading
-// every order, so it's cheap to keep subscribed in SiteHeader.
+// Count for the nav badge: V1 orders that wait for approval (state "requested").
+// A filtered query, so it is cheap to keep subscribed in SiteHeader. An order
+// of the old model has no `state` field and does not match.
 export function watchNewPreorderCount(
   onCount: (count: number) => void,
   onError: (error: Error) => void
@@ -632,7 +623,7 @@ export function watchNewPreorderCount(
     onError(new Error("Firebase is not configured."));
     return () => undefined;
   }
-  const newOrdersQuery = query(collection(db(), ORDERS_COLLECTION), where("status", "==", "new"));
+  const newOrdersQuery = query(collection(db(), ORDERS_COLLECTION), where("state", "==", "requested"));
   return onSnapshot(
     newOrdersQuery,
     (snapshot) => onCount(snapshot.size),

@@ -9,31 +9,38 @@ import {
   FlaskConical,
   KeyRound,
   Mail,
-  MapPin,
   Package,
   Pencil,
   Plus,
-  QrCode,
   RotateCcw,
   Settings,
   Trash2,
   X
 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
-import { navigate } from "../App";
 import { ContactMessagesCard } from "../components/admin/ContactMessagesCard";
+import { EventsView } from "../components/admin/EventsView";
+import { LiveEventControls, LiveOrdersQueue } from "../components/admin/LiveOrdersQueue";
+import { OrderingSettingsCard } from "../components/admin/OrderingSettingsCard";
+import {
+  isPosPaymentMethod,
+  posPaymentLabel,
+  posPaymentLabels,
+  posPaymentMethods,
+  posPaymentUrl
+} from "../components/admin/paymentLabels";
+import { PreordersQueue } from "../components/admin/PreordersQueue";
+import { WaitlistCard } from "../components/admin/WaitlistCard";
 import { SiteContentView } from "../components/admin/SiteContentView";
 import { ChangePasswordForm } from "../components/ChangePasswordForm";
 import { ImagePicker } from "../components/ImagePicker";
 import { QRCodePanel } from "../components/QRCodePanel";
 import { apiConfigured, sendPosReceipt } from "../lib/api";
-import { useAvailabilityWindows, usePickupLocations } from "../lib/availabilityStore";
 import {
   menuProducts,
   availabilityWindows as starterAvailabilityWindows,
   paymentSettings as initialPaymentSettings,
-  pickupLocations as starterPickupLocations,
-  vendorSessions
+  pickupLocations as starterPickupLocations
 } from "../data/fixtures";
 import { useBusinessSettings } from "../lib/businessSettings";
 import { downloadCsv } from "../lib/csv";
@@ -42,17 +49,13 @@ import {
   addReceiptContact,
   adjustInventory,
   deleteAllTestTickets,
-  deleteAvailabilityWindow,
   deleteExpense,
   deleteMenuItem,
-  deletePickupLocation,
   deletePosTicket,
   reportingDefaults,
-  saveAvailabilityWindow,
   saveBusinessSettings,
   saveMenuItem,
   savePaymentSettings,
-  savePickupLocation,
   savePosTicket,
   saveReportingSettings,
   saveTestMode,
@@ -60,9 +63,7 @@ import {
   seedMenuItemsIfEmpty,
   seedPickupLocationsIfEmpty,
   setPosTicketStatus,
-  updateOrderStatus,
   updatePosTicket,
-  watchOrders,
   watchAppState,
   watchExpenses,
   watchInventory,
@@ -86,7 +87,6 @@ import {
 } from "../lib/firestoreClient";
 import { useMenuProducts } from "../lib/menuStore";
 import { formatMoney } from "../lib/money";
-import { canTransitionOrder } from "../lib/order";
 import {
   buildBalanceSheet,
   buildIncomeStatement,
@@ -102,19 +102,12 @@ import {
 import {
   businessDateKey,
   businessTodayKey,
-  formatBusinessDateTime,
-  formatWindow,
-  isWindowSelectable
+  formatBusinessDateTime
 } from "../lib/time";
 import type {
-  AvailabilityWindow,
-  FulfillmentType,
   MenuProduct,
   MenuVariant,
-  OrderRecord,
-  OrderStatus,
   PaymentSettings,
-  PickupLocation,
   PosTicketItem,
   ProductStatus,
   SpiceLevel
@@ -124,39 +117,18 @@ interface AdminPageProps {
   path: string;
 }
 
-type PaymentMethod = PosPaymentMethod;
-
 interface PosState {
   tickets: PosTicketRecord[];
   loading: boolean;
   error: string | null;
 }
 
-const statusLabels: Record<OrderStatus, string> = {
-  new: "New",
-  confirmed: "Confirmed",
-  preparing: "Preparing",
-  ready: "Ready",
-  completed: "Completed",
-  canceled: "Canceled"
-};
-
-const paymentLabels: Record<PaymentMethod, string> = {
-  cash: "Cash",
-  cashapp: "Cash App",
-  paypal: "PayPal",
-  venmo: "Venmo",
-  zelle: "Zelle",
-  applepay: "Apple Pay"
-};
-
 function adminTitle(path: string) {
   if (path.includes("/pos")) return "Live POS";
   if (path.includes("/preorders")) return "Pre-Orders";
   if (path.includes("/orders")) return "Orders";
   if (path.includes("/menu")) return "Menu";
-  if (path.includes("/availability")) return "Availability";
-  if (path.includes("/vendor")) return "Vendor";
+  if (path.includes("/events")) return "Events";
   if (path.includes("/content")) return "Site Content";
   if (path.includes("/contacts")) return "Contacts";
   if (path.includes("/settings")) return "Settings";
@@ -170,19 +142,6 @@ function slugify(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
-}
-
-function methodUrl(method: PaymentMethod, settings: PaymentSettings, cents: number) {
-  const amount = (cents / 100).toFixed(2);
-  const note = encodeURIComponent("Bangin Bustos Tamales POS ticket");
-  if (method === "cash") return "";
-  if (method === "cashapp") return `https://cash.app/$${settings.cashAppCashtag}/${amount}`;
-  if (method === "paypal") return `https://paypal.me/${settings.paypalMe}/${amount}`;
-  if (method === "venmo") {
-    return `venmo://paycharge?txn=pay&recipients=${settings.venmoHandle}&amount=${amount}&note=${note}`;
-  }
-  if (method === "zelle") return `Zelle payment to ${settings.zelleContact} for $${amount}`;
-  return settings.applePayNote;
 }
 
 function usePosTickets(): PosState {
@@ -310,11 +269,10 @@ export function AdminPage({ path }: AdminPageProps) {
 
       {title === "Dashboard" && <Dashboard pos={pos} products={products} />}
       {title === "Live POS" && <PosView products={products} payments={payments} testMode={testMode} />}
-      {title === "Pre-Orders" && <PreordersTopLevelView />}
+      {title === "Pre-Orders" && <PreordersQueue />}
       {title === "Orders" && <OrdersView pos={pos} products={products} />}
       {title === "Menu" && <MenuView products={products} />}
-      {title === "Availability" && <AvailabilityView />}
-      {title === "Vendor" && <VendorAdminView />}
+      {title === "Events" && <EventsView products={products} />}
       {title === "Site Content" && <SiteContentView />}
       {title === "Contacts" && <ContactsView />}
       {title === "Settings" && (
@@ -411,7 +369,7 @@ function PosView({
   // Wizard stage inside the ticket panel: review the cart, then take payment.
   const [stage, setStage] = useState<"cart" | "pay">("cart");
   const [ticketOpen, setTicketOpen] = useState(false);
-  const [method, setMethod] = useState<PaymentMethod>("cash");
+  const [method, setMethod] = useState<PosPaymentMethod>("cash");
   const [customerName, setCustomerName] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -689,20 +647,16 @@ function PosView({
               </label>
               <fieldset className="pos-pay-methods">
                 <legend>Payment</legend>
-                {(Object.keys(paymentLabels) as PaymentMethod[]).map((key) => (
-                  <label
-                    className={key === "applepay" && !payments.applePayEnabled ? "choice-disabled" : ""}
-                    key={key}
-                  >
+                {posPaymentMethods.map((key) => (
+                  <label key={key}>
                     <input
                       type="radio"
                       name="pos-payment"
                       value={key}
                       checked={method === key}
-                      disabled={key === "applepay" && !payments.applePayEnabled}
                       onChange={() => setMethod(key)}
                     />
-                    <span>{paymentLabels[key]}</span>
+                    <span>{posPaymentLabels[key]}</span>
                   </label>
                 ))}
               </fieldset>
@@ -711,10 +665,10 @@ function PosView({
               ) : (
                 <div className="pos-pay-qr">
                   <QRCodePanel
-                    url={methodUrl(method, payments, totalCents)}
-                    title={`Pay with ${paymentLabels[method]}`}
+                    url={posPaymentUrl(method, payments, totalCents)}
+                    title={`Pay with ${posPaymentLabels[method]}`}
                     eventName={formatMoney(totalCents)}
-                    alt={`QR code for ${paymentLabels[method]} payment`}
+                    alt={`QR code for ${posPaymentLabels[method]} payment`}
                   />
                 </div>
               )}
@@ -784,7 +738,7 @@ interface PaidTicketSnapshot {
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
-  method: PaymentMethod;
+  method: PosPaymentMethod;
   customerName: string;
   isTest: boolean;
 }
@@ -913,52 +867,23 @@ function ReceiptDrawer({
   );
 }
 
-function useOrders() {
-  const [orders, setOrders] = useState<OrderRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(
-    () =>
-      watchOrders(
-        (data) => {
-          setOrders(data);
-          setLoading(false);
-          setError(null);
-        },
-        (err) => {
-          setError(err.message);
-          setLoading(false);
-        }
-      ),
-    []
-  );
-  return { orders, loading, error };
-}
-
-const openOrderStatuses: OrderStatus[] = ["new", "confirmed", "preparing", "ready"];
-
 function OrdersView({ pos, products }: { pos: PosState; products: MenuProduct[] }) {
-  const [group, setGroup] = useState<"overview" | "pos" | "preorders">("overview");
-  const preorders = useOrders();
+  const [group, setGroup] = useState<"overview" | "pos">("overview");
   const todayKey = businessTodayKey();
   const paid = pos.tickets.filter((ticket) => ticket.status === "paid");
   const paidToday = paid.filter((ticket) => businessDateKey(ticket.createdAtUtc) === todayKey);
   const revenueToday = paidToday.reduce((sum, ticket) => sum + ticket.totalCents, 0);
   const revenueAllTime = paid.reduce((sum, ticket) => sum + ticket.totalCents, 0);
   const lastSale = paid[0];
-  const newRequests = preorders.orders.filter((order) => order.status === "new");
-  const openOrders = preorders.orders.filter((order) => openOrderStatuses.includes(order.status));
 
   if (group === "pos") {
     return <PosOrdersDetail pos={pos} products={products} onBack={() => setGroup("overview")} />;
   }
 
-  if (group === "preorders") {
-    return <PreordersDetail preorders={preorders} onBack={() => setGroup("overview")} />;
-  }
-
   return (
-    <section className="order-groups">
+    <section className="order-groups live-orders-screen">
+      <LiveEventControls products={products} />
+      <LiveOrdersQueue />
       <button className="admin-card order-group-card" type="button" onClick={() => setGroup("pos")}>
         <div className="order-group-head">
           <CreditCard size={24} />
@@ -996,241 +921,7 @@ function OrdersView({ pos, products }: { pos: PosState; products: MenuProduct[] 
           <ChevronRight size={18} />
         </span>
       </button>
-
-      <button className="admin-card order-group-card" type="button" onClick={() => setGroup("preorders")}>
-        <div className="order-group-head">
-          <CalendarDays size={24} />
-          <h2>Batch Pre-orders</h2>
-          <span className="status-badge product-status-active">Live</span>
-        </div>
-        {preorders.loading ? (
-          <p className="muted">Loading pre-orders…</p>
-        ) : preorders.error ? (
-          <p className="muted">Pre-orders unavailable: {preorders.error}</p>
-        ) : (
-          <div className="order-group-stats">
-            <div>
-              <span>New requests</span>
-              <strong>{newRequests.length}</strong>
-            </div>
-            <div>
-              <span>Open orders</span>
-              <strong>{openOrders.length}</strong>
-            </div>
-            <div>
-              <span>All time</span>
-              <strong>{preorders.orders.length}</strong>
-            </div>
-            <div>
-              <span>Latest request</span>
-              <strong>
-                {preorders.orders[0]
-                  ? formatBusinessDateTime(preorders.orders[0].createdAtUtc)
-                  : "—"}
-              </strong>
-            </div>
-          </div>
-        )}
-        <span className="order-group-cta">
-          Manage pre-orders
-          <ChevronRight size={18} />
-        </span>
-      </button>
     </section>
-  );
-}
-
-function PreordersTopLevelView() {
-  const preorders = useOrders();
-  return <PreordersDetail preorders={preorders} onBack={() => navigate("/admin/orders")} />;
-}
-
-function PreordersDetail({
-  preorders,
-  onBack
-}: {
-  preorders: { orders: OrderRecord[]; loading: boolean; error: string | null };
-  onBack: () => void;
-}) {
-  const [actionError, setActionError] = useState("");
-  const [rejectingOrder, setRejectingOrder] = useState<OrderRecord | null>(null);
-  const availabilityWindows = useAvailabilityWindows();
-  const openCount = preorders.orders.filter((order) =>
-    openOrderStatuses.includes(order.status)
-  ).length;
-
-  async function transition(order: OrderRecord, status: OrderStatus) {
-    if (status === "canceled") {
-      setRejectingOrder(order);
-      return;
-    }
-    setActionError("");
-    try {
-      await updateOrderStatus(order.id, status);
-    } catch (error) {
-      setActionError(
-        error instanceof Error ? error.message : "The status change could not be saved."
-      );
-    }
-  }
-
-  async function confirmReject(order: OrderRecord) {
-    setActionError("");
-    try {
-      await updateOrderStatus(order.id, "canceled");
-      setRejectingOrder(null);
-    } catch (error) {
-      setActionError(
-        error instanceof Error ? error.message : "The status change could not be saved."
-      );
-    }
-  }
-
-  return (
-    <>
-    <section className="admin-card">
-      <div className="toolbar">
-        <button className="button button-small" type="button" onClick={onBack}>
-          <ArrowLeft size={16} />
-          All orders
-        </button>
-      </div>
-      <h2>Batch Pre-orders</h2>
-      {preorders.loading ? (
-        <p className="muted">Loading pre-orders…</p>
-      ) : preorders.error ? (
-        <p className="muted">Pre-orders unavailable: {preorders.error}</p>
-      ) : preorders.orders.length === 0 ? (
-        <p className="muted">
-          No pre-orders yet. Requests from the website order page will land here.
-        </p>
-      ) : (
-        <>
-          <div className="admin-row">
-            <span>
-              {preorders.orders.length} request{preorders.orders.length === 1 ? "" : "s"}
-            </span>
-            <strong>{openCount} open</strong>
-          </div>
-          {actionError && (
-            <p className="form-notice form-notice-error" role="alert">
-              {actionError}
-            </p>
-          )}
-          {preorders.orders.map((order) => {
-            const window = availabilityWindows.find(
-              (item) => item.id === order.availabilityWindowId
-            );
-            return (
-              <article className="receipt-card" key={order.id}>
-                <div className="receipt-head">
-                  <div>
-                    <strong>
-                      {order.customer.name} · {order.orderNumber}
-                    </strong>
-                    <span className="muted">{formatBusinessDateTime(order.createdAtUtc)}</span>
-                  </div>
-                  <span className={`status-badge status-${order.status}`}>
-                    {statusLabels[order.status]}
-                  </span>
-                </div>
-                <p className="preorder-contact">
-                  <a href={`tel:${order.customer.mobile}`}>{order.customer.mobile}</a>
-                  {" · "}
-                  <a href={`mailto:${order.customer.email}`}>{order.customer.email}</a>
-                  {" · "}prefers {order.customer.preferredContact}
-                </p>
-                {window && (
-                  <p className="muted preorder-window">
-                    {window.label} — {formatWindow(window)}
-                  </p>
-                )}
-                <div className="receipt-lines">
-                  {order.items.map((line) => (
-                    <div className="receipt-line" key={`${order.id}-${line.variantId}`}>
-                      <span>
-                        {line.quantity} × {line.productName} · {line.variantLabel}
-                      </span>
-                      <span className="muted">@ {formatMoney(line.unitPriceCents)}</span>
-                      <strong>{formatMoney(line.lineTotalCents)}</strong>
-                    </div>
-                  ))}
-                </div>
-                {order.bulk.enabled && (
-                  <p className="muted">
-                    Bulk order — {order.bulk.guestCount || "?"} guests
-                    {order.bulk.occasion ? ` · ${order.bulk.occasion}` : ""}
-                    {order.bulk.desiredReadyTime ? ` · ready by ${order.bulk.desiredReadyTime}` : ""}
-                  </p>
-                )}
-                {order.customer.notes && <p className="muted">Note: {order.customer.notes}</p>}
-                <div className="receipt-totals">
-                  <div className="receipt-grand">
-                    <span>Estimated total</span>
-                    <strong>{formatMoney(order.totals.totalCents)}</strong>
-                  </div>
-                </div>
-                <div className="button-row">
-                  {(["confirmed", "preparing", "ready", "completed", "canceled"] as OrderStatus[])
-                    .filter((status) => canTransitionOrder(order.status, status))
-                    .map((status) => (
-                      <button
-                        key={status}
-                        className="button button-small"
-                        type="button"
-                        onClick={() => void transition(order, status)}
-                      >
-                        {status === "canceled" ? "Reject" : statusLabels[status]}
-                      </button>
-                    ))}
-                </div>
-              </article>
-            );
-          })}
-        </>
-      )}
-    </section>
-    {rejectingOrder && (
-      <div className="modal-overlay">
-        <div className="admin-card modal-card" role="dialog" aria-label="Confirm rejection">
-          <h2>Reject {rejectingOrder.orderNumber}?</h2>
-          <p className="muted">
-            Reach out to {rejectingOrder.customer.name} before rejecting — they prefer{" "}
-            {rejectingOrder.customer.preferredContact}.
-          </p>
-          <div className="button-row">
-            <a className="button button-small" href={`tel:${rejectingOrder.customer.mobile}`}>
-              Call {rejectingOrder.customer.mobile}
-            </a>
-            <a className="button button-small" href={`mailto:${rejectingOrder.customer.email}`}>
-              Email {rejectingOrder.customer.email}
-            </a>
-          </div>
-          {actionError && (
-            <p className="form-notice form-notice-error" role="alert">
-              {actionError}
-            </p>
-          )}
-          <div className="button-row">
-            <button
-              className="button button-primary"
-              type="button"
-              onClick={() => void confirmReject(rejectingOrder)}
-            >
-              Confirm Rejection
-            </button>
-            <button
-              className="button button-ghost"
-              type="button"
-              onClick={() => setRejectingOrder(null)}
-            >
-              Go Back
-            </button>
-          </div>
-        </div>
-      </div>
-    )}
-    </>
   );
 }
 
@@ -1319,7 +1010,7 @@ function PosOrdersDetail({
                     <span className="muted">{formatBusinessDateTime(ticket.createdAtUtc)}</span>
                   </div>
                   <span className="price-chip">
-                    <span>{paymentLabels[ticket.paymentMethod]}</span>
+                    <span>{posPaymentLabel(ticket.paymentMethod)}</span>
                   </span>
                   {ticket.status === "void" && (
                     <span className="status-badge product-status-inactive">Void</span>
@@ -1411,7 +1102,7 @@ function TicketEditor({
   const [items, setItems] = useState<PosTicketItem[]>(() =>
     ticket.items.map((item) => ({ ...item }))
   );
-  const [method, setMethod] = useState<PaymentMethod>(ticket.paymentMethod);
+  const [method, setMethod] = useState<string>(ticket.paymentMethod);
   const [customerName, setCustomerName] = useState(ticket.customerName);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -1521,11 +1212,12 @@ function TicketEditor({
         Payment method
         <select
           value={method}
-          onChange={(event) => setMethod(event.target.value as PaymentMethod)}
+          onChange={(event) => setMethod(event.target.value)}
         >
-          {(Object.keys(paymentLabels) as PaymentMethod[]).map((key) => (
+          {!isPosPaymentMethod(method) && <option value={method}>{posPaymentLabel(method)}</option>}
+          {posPaymentMethods.map((key) => (
             <option key={key} value={key}>
-              {paymentLabels[key]}
+              {posPaymentLabels[key]}
             </option>
           ))}
         </select>
@@ -1592,23 +1284,6 @@ function parsePriceCents(value: FormDataEntryValue | null): number {
 
 function centsToInput(cents: number | undefined): string {
   return cents && cents > 0 ? (cents / 100).toFixed(2) : "";
-}
-
-// datetime-local inputs read/write the browser's local time with no
-// timezone offset in the string, so these convert to/from the UTC ISO
-// strings AvailabilityWindow stores.
-function toDatetimeLocalValue(iso: string | undefined): string {
-  if (!iso) return "";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  const localMs = date.getTime() - date.getTimezoneOffset() * 60000;
-  return new Date(localMs).toISOString().slice(0, 16);
-}
-
-function toIsoFromLocal(value: FormDataEntryValue | null): string {
-  if (!value) return "";
-  const date = new Date(String(value));
-  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
 }
 
 function MenuView({ products }: { products: MenuProduct[] }) {
@@ -1932,457 +1607,6 @@ function ProductForm({
   );
 }
 
-function AvailabilityView() {
-  return (
-    <section className="menu-manager">
-      <PickupLocationsManager />
-      <AvailabilityWindowsManager />
-    </section>
-  );
-}
-
-function PickupLocationForm({
-  location,
-  onSave,
-  onCancel
-}: {
-  location?: PickupLocation;
-  onSave: (location: PickupLocation) => void;
-  onCancel: () => void;
-}) {
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const name = String(form.get("name") ?? "").trim();
-    if (!name) return;
-    onSave({
-      id: location?.id ?? `location-${slugify(name)}-${Date.now()}`,
-      name,
-      address: String(form.get("address") ?? "").trim(),
-      instructions: String(form.get("instructions") ?? "").trim(),
-      active: form.get("active") === "on"
-    });
-  }
-
-  return (
-    <form className="admin-card" onSubmit={handleSubmit}>
-      <h3>{location ? `Edit ${location.name}` : "Add Pickup Location"}</h3>
-      <div className="form-grid">
-        <label className="full-span">
-          Name
-          <input name="name" defaultValue={location?.name ?? ""} required />
-        </label>
-        <label className="full-span">
-          Address / area
-          <input name="address" defaultValue={location?.address ?? ""} />
-        </label>
-        <label className="full-span">
-          Pickup instructions
-          <textarea name="instructions" rows={2} defaultValue={location?.instructions ?? ""} />
-        </label>
-        <label className="toggle-row full-span">
-          <input name="active" type="checkbox" defaultChecked={location?.active ?? true} />
-          <span>Active</span>
-        </label>
-        <div className="button-row full-span">
-          <button className="button button-primary" type="submit">
-            {location ? "Save Changes" : "Add Location"}
-          </button>
-          <button className="button button-ghost" type="button" onClick={onCancel}>
-            Cancel
-          </button>
-        </div>
-      </div>
-    </form>
-  );
-}
-
-function PickupLocationsManager() {
-  const locations = usePickupLocations();
-  const [adding, setAdding] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [error, setError] = useState("");
-
-  async function persist(action: () => Promise<void>) {
-    setError("");
-    try {
-      await action();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save the location.");
-    }
-  }
-
-  function addLocation(location: PickupLocation) {
-    void persist(() => savePickupLocation(location));
-    setAdding(false);
-  }
-
-  function saveLocation(location: PickupLocation) {
-    void persist(() => savePickupLocation(location));
-    setEditingId(null);
-  }
-
-  function removeLocation(entry: PickupLocation) {
-    if (!window.confirm(`Remove ${entry.name}? This is permanent.`)) return;
-    void persist(() => deletePickupLocation(entry.id));
-  }
-
-  return (
-    <section className="menu-manager">
-      <div className="menu-toolbar">
-        <p className="muted">
-          {locations.length} pickup location{locations.length === 1 ? "" : "s"}
-        </p>
-        <button
-          className={`button ${adding ? "button-ghost" : "button-primary"}`}
-          type="button"
-          onClick={() => {
-            setAdding((current) => !current);
-            setEditingId(null);
-          }}
-        >
-          <Plus size={18} />
-          {adding ? "Close" : "Add Location"}
-        </button>
-      </div>
-      {error && (
-        <p className="form-notice form-notice-error" role="alert">
-          {error}
-        </p>
-      )}
-      {adding && <PickupLocationForm onSave={addLocation} onCancel={() => setAdding(false)} />}
-      <div className="menu-grid">
-        {locations.map((location) =>
-          editingId === location.id ? (
-            <PickupLocationForm
-              key={location.id}
-              location={location}
-              onSave={saveLocation}
-              onCancel={() => setEditingId(null)}
-            />
-          ) : (
-            <article className="admin-card" key={location.id}>
-              <MapPin size={22} />
-              <h3>{location.name}</h3>
-              <span
-                className={`status-badge product-status-${location.active ? "active" : "inactive"}`}
-              >
-                {location.active ? "Active" : "Inactive"}
-              </span>
-              {location.address && <p className="muted">{location.address}</p>}
-              {location.instructions && <p className="muted">{location.instructions}</p>}
-              <div className="button-row">
-                <button
-                  className="button button-small"
-                  type="button"
-                  onClick={() => {
-                    setEditingId(location.id);
-                    setAdding(false);
-                  }}
-                >
-                  <Pencil size={16} />
-                  Edit
-                </button>
-                <button
-                  className="button button-small"
-                  type="button"
-                  onClick={() => removeLocation(location)}
-                >
-                  <Trash2 size={16} />
-                  Remove
-                </button>
-              </div>
-            </article>
-          )
-        )}
-        {locations.length === 0 && <p className="muted">No pickup locations yet.</p>}
-      </div>
-    </section>
-  );
-}
-
-const fulfillmentTypeLabels: Record<FulfillmentType, string> = {
-  scheduled_pickup: "Scheduled Pickup",
-  event_pickup: "Event / Pop-up Pickup"
-};
-
-function AvailabilityWindowForm({
-  windowRecord,
-  locations,
-  onSave,
-  onCancel
-}: {
-  windowRecord?: AvailabilityWindow;
-  locations: PickupLocation[];
-  onSave: (window: AvailabilityWindow) => void;
-  onCancel: () => void;
-}) {
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const label = String(form.get("label") ?? "").trim();
-    if (!label) return;
-    onSave({
-      id: windowRecord?.id ?? `window-${slugify(label)}-${Date.now()}`,
-      locationId: String(form.get("locationId") ?? ""),
-      label,
-      fulfillmentType: (form.get("fulfillmentType") as FulfillmentType) || "scheduled_pickup",
-      startsAtUtc: toIsoFromLocal(form.get("startsAtUtc")),
-      endsAtUtc: toIsoFromLocal(form.get("endsAtUtc")),
-      cutoffAtUtc: toIsoFromLocal(form.get("cutoffAtUtc")),
-      capacity: Math.max(0, Math.round(Number(form.get("capacity") ?? 0))),
-      committedOrders: windowRecord?.committedOrders ?? 0,
-      active: form.get("active") === "on",
-      preordersEnabled: form.get("preordersEnabled") === "on",
-      instructions: String(form.get("instructions") ?? "").trim(),
-      vendorSessionId: windowRecord?.vendorSessionId
-    });
-  }
-
-  return (
-    <form className="admin-card" onSubmit={handleSubmit}>
-      <h3>{windowRecord ? `Edit ${windowRecord.label}` : "Add Pop-Up Event"}</h3>
-      <div className="form-grid">
-        <label className="full-span">
-          Label
-          <input name="label" defaultValue={windowRecord?.label ?? ""} required />
-        </label>
-        <label>
-          Fulfillment type
-          <select
-            name="fulfillmentType"
-            defaultValue={windowRecord?.fulfillmentType ?? "scheduled_pickup"}
-          >
-            {(Object.keys(fulfillmentTypeLabels) as FulfillmentType[]).map((type) => (
-              <option key={type} value={type}>
-                {fulfillmentTypeLabels[type]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Location
-          <select name="locationId" defaultValue={windowRecord?.locationId ?? ""}>
-            <option value="">— Select a location —</option>
-            {locations.map((location) => (
-              <option key={location.id} value={location.id}>
-                {location.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Starts
-          <input
-            name="startsAtUtc"
-            type="datetime-local"
-            defaultValue={toDatetimeLocalValue(windowRecord?.startsAtUtc)}
-            required
-          />
-        </label>
-        <label>
-          Ends
-          <input
-            name="endsAtUtc"
-            type="datetime-local"
-            defaultValue={toDatetimeLocalValue(windowRecord?.endsAtUtc)}
-            required
-          />
-        </label>
-        <label>
-          Order cutoff
-          <input
-            name="cutoffAtUtc"
-            type="datetime-local"
-            defaultValue={toDatetimeLocalValue(windowRecord?.cutoffAtUtc)}
-            required
-          />
-        </label>
-        <label>
-          Capacity
-          <input name="capacity" type="number" min="0" defaultValue={windowRecord?.capacity ?? 0} />
-        </label>
-        <label className="full-span">
-          Pickup instructions
-          <textarea name="instructions" rows={2} defaultValue={windowRecord?.instructions ?? ""} />
-        </label>
-        <label className="toggle-row full-span">
-          <input name="active" type="checkbox" defaultChecked={windowRecord?.active ?? true} />
-          <span>Active — visible to customers</span>
-        </label>
-        <label className="toggle-row full-span">
-          <input
-            name="preordersEnabled"
-            type="checkbox"
-            defaultChecked={windowRecord?.preordersEnabled ?? true}
-          />
-          <span>Accepting pre-orders for this event (pre-orders always close the day of)</span>
-        </label>
-        <div className="button-row full-span">
-          <button className="button button-primary" type="submit">
-            {windowRecord ? "Save Changes" : "Add Event"}
-          </button>
-          <button className="button button-ghost" type="button" onClick={onCancel}>
-            Cancel
-          </button>
-        </div>
-      </div>
-    </form>
-  );
-}
-
-function AvailabilityWindowsManager() {
-  const windows = useAvailabilityWindows();
-  const locations = usePickupLocations();
-  const [adding, setAdding] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [error, setError] = useState("");
-
-  const sortedWindows = [...windows].sort(
-    (a, b) => new Date(a.startsAtUtc).getTime() - new Date(b.startsAtUtc).getTime()
-  );
-
-  async function persist(action: () => Promise<void>) {
-    setError("");
-    try {
-      await action();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save the event.");
-    }
-  }
-
-  function addWindow(windowRecord: AvailabilityWindow) {
-    void persist(() => saveAvailabilityWindow(windowRecord));
-    setAdding(false);
-  }
-
-  function saveWindow(windowRecord: AvailabilityWindow) {
-    void persist(() => saveAvailabilityWindow(windowRecord));
-    setEditingId(null);
-  }
-
-  function removeWindow(entry: AvailabilityWindow) {
-    if (!window.confirm(`Remove ${entry.label}? This is permanent.`)) return;
-    void persist(() => deleteAvailabilityWindow(entry.id));
-  }
-
-  function togglePreorders(entry: AvailabilityWindow) {
-    void persist(() => saveAvailabilityWindow({ ...entry, preordersEnabled: !entry.preordersEnabled }));
-  }
-
-  return (
-    <section className="menu-manager">
-      <div className="menu-toolbar">
-        <p className="muted">
-          {windows.length} pop-up event{windows.length === 1 ? "" : "s"}
-        </p>
-        <button
-          className={`button ${adding ? "button-ghost" : "button-primary"}`}
-          type="button"
-          onClick={() => {
-            setAdding((current) => !current);
-            setEditingId(null);
-          }}
-        >
-          <Plus size={18} />
-          {adding ? "Close" : "Add Event"}
-        </button>
-      </div>
-      {error && (
-        <p className="form-notice form-notice-error" role="alert">
-          {error}
-        </p>
-      )}
-      {adding && (
-        <AvailabilityWindowForm
-          locations={locations}
-          onSave={addWindow}
-          onCancel={() => setAdding(false)}
-        />
-      )}
-      <div className="admin-grid">
-        {sortedWindows.map((entry) => {
-          const location = locations.find((item) => item.id === entry.locationId);
-          const bookable = isWindowSelectable(entry);
-          return editingId === entry.id ? (
-            <AvailabilityWindowForm
-              key={entry.id}
-              windowRecord={entry}
-              locations={locations}
-              onSave={saveWindow}
-              onCancel={() => setEditingId(null)}
-            />
-          ) : (
-            <article className="admin-card" key={entry.id}>
-              <CalendarDays size={24} />
-              <h2>{entry.label}</h2>
-              <span className={`status-badge product-status-${bookable ? "active" : "inactive"}`}>
-                {bookable ? "Accepting Pre-Orders" : "In-Person Only"}
-              </span>
-              <p>{formatWindow(entry)}</p>
-              <p className="muted">{fulfillmentTypeLabels[entry.fulfillmentType]}</p>
-              <div className="admin-row">
-                <span>{location?.name ?? "No location set"}</span>
-                <strong>{Math.max(0, entry.capacity - entry.committedOrders)} open</strong>
-              </div>
-              {entry.instructions && <p>{entry.instructions}</p>}
-              <label className="toggle-row">
-                <input
-                  type="checkbox"
-                  checked={entry.preordersEnabled}
-                  onChange={() => togglePreorders(entry)}
-                />
-                <span>Accepting pre-orders for this event</span>
-              </label>
-              <div className="button-row">
-                <button
-                  className="button button-small"
-                  type="button"
-                  onClick={() => {
-                    setEditingId(entry.id);
-                    setAdding(false);
-                  }}
-                >
-                  <Pencil size={16} />
-                  Edit
-                </button>
-                <button className="button button-small" type="button" onClick={() => removeWindow(entry)}>
-                  <Trash2 size={16} />
-                  Remove
-                </button>
-              </div>
-            </article>
-          );
-        })}
-        {windows.length === 0 && <p className="muted">No pop-up events yet.</p>}
-      </div>
-    </section>
-  );
-}
-
-function VendorAdminView() {
-  const session = vendorSessions[0];
-  const orderUrl = `${window.location.origin}/order?vendor=${encodeURIComponent(session.publicToken)}`;
-  return (
-    <section className="admin-grid two-col">
-      <article className="admin-card">
-        <QrCode size={24} />
-        <h2>{session.name}</h2>
-        <p>{session.eventLocation}</p>
-        <div className="admin-row">
-          <span>Orders</span>
-          <strong>{session.ordersEnabled ? "Enabled" : "Disabled"}</strong>
-        </div>
-        <div className="admin-row">
-          <span>Waitlist</span>
-          <strong>{session.contactCaptureEnabled ? "Enabled" : "Disabled"}</strong>
-        </div>
-      </article>
-      <QRCodePanel url={orderUrl} eventName={session.name} />
-    </section>
-  );
-}
-
 function useReceiptContacts() {
   const [contacts, setContacts] = useState<ReceiptContactRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -2469,6 +1693,7 @@ function ContactsView() {
   return (
     <section className="menu-manager">
       <ContactMessagesCard />
+      <WaitlistCard />
       <article className="admin-card">
         <div className="toolbar">
           <h2>Email List</h2>
@@ -2521,11 +1746,12 @@ const timezoneOptions = [
   { value: "Pacific/Honolulu", label: "Hawaii — Pacific/Honolulu" }
 ];
 
-type SettingsTab = "account" | "business" | "inventory" | "payments" | "reports";
+type SettingsTab = "account" | "business" | "ordering" | "inventory" | "payments" | "reports";
 
 const settingsTabs: { id: SettingsTab; label: string }[] = [
   { id: "account", label: "Account" },
   { id: "business", label: "Business" },
+  { id: "ordering", label: "Ordering" },
   { id: "inventory", label: "Inventory" },
   { id: "payments", label: "Payments" },
   { id: "reports", label: "Reports" }
@@ -2571,6 +1797,7 @@ function SettingsView({
           <OperatingModeCard testMode={testMode} />
         </div>
       )}
+      {tab === "ordering" && <OrderingSettingsCard />}
       {tab === "inventory" && <InventorySettings products={products} />}
       {tab === "payments" && <PaymentSettingsCard payments={payments} />}
       {tab === "reports" && <ReportSettingsTab />}
@@ -2645,11 +1872,7 @@ function PaymentSettingsCard({ payments }: { payments: PaymentSettings }) {
     try {
       await savePaymentSettings({
         cashAppCashtag: String(form.get("cashAppCashtag") ?? "").trim(),
-        paypalMe: String(form.get("paypalMe") ?? "").trim(),
-        venmoHandle: String(form.get("venmoHandle") ?? "").trim(),
-        zelleContact: String(form.get("zelleContact") ?? "").trim(),
-        applePayEnabled: form.get("applePayEnabled") === "on",
-        applePayNote: String(form.get("applePayNote") ?? "").trim()
+        venmoHandle: String(form.get("venmoHandle") ?? "").trim()
       });
       setSaved(true);
     } catch (err) {
@@ -2664,7 +1887,7 @@ function PaymentSettingsCard({ payments }: { payments: PaymentSettings }) {
       className="admin-card settings-list settings-panel"
       // Remount when the stored accounts arrive so the fields pick up the
       // loaded values as their defaults.
-      key={`${payments.cashAppCashtag}|${payments.paypalMe}|${payments.venmoHandle}|${payments.zelleContact}|${payments.applePayEnabled}|${payments.applePayNote}`}
+      key={`${payments.cashAppCashtag}|${payments.venmoHandle}`}
       onSubmit={saveSettings}
     >
       <Settings size={24} />
@@ -2674,24 +1897,8 @@ function PaymentSettingsCard({ payments }: { payments: PaymentSettings }) {
         <input name="cashAppCashtag" defaultValue={payments.cashAppCashtag} />
       </label>
       <label>
-        PayPal.Me name
-        <input name="paypalMe" defaultValue={payments.paypalMe} />
-      </label>
-      <label>
         Venmo handle
         <input name="venmoHandle" defaultValue={payments.venmoHandle} />
-      </label>
-      <label>
-        Zelle email or phone
-        <input name="zelleContact" defaultValue={payments.zelleContact} />
-      </label>
-      <label>
-        Apple Pay note
-        <input name="applePayNote" defaultValue={payments.applePayNote} />
-      </label>
-      <label className="toggle-row">
-        <input name="applePayEnabled" type="checkbox" defaultChecked={payments.applePayEnabled} />
-        <span>Enable Apple Pay once merchant processing is ready</span>
       </label>
       {error && (
         <p className="form-notice form-notice-error" role="alert">
@@ -3068,7 +2275,7 @@ function ReportsView({ pos }: { pos: PosState }) {
       ticket.ticketNumber,
       ticket.customerName,
       formatBusinessDateTime(ticket.createdAtUtc),
-      paymentLabels[ticket.paymentMethod],
+      posPaymentLabel(ticket.paymentMethod),
       ticket.items.map((item) => `${item.quantity}x ${item.productName}`).join("; "),
       dollars(ticket.subtotalCents),
       dollars(ticket.taxCents),

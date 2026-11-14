@@ -6,15 +6,20 @@ import { corsHeaders, isAllowedOrigin } from "./cors";
 import { upsertCustomer } from "./customers";
 import { sendEmail, sendEmailSafely, type Mailer } from "./email";
 import { readConfig, type Config, type Env } from "./env";
-import { Firestore } from "./firestore";
+import { censusGeocode, quoteDelivery, validateQuote } from "./delivery";
+import { ContentionError, Firestore } from "./firestore";
 import { getAccessToken, parseServiceAccount } from "./googleAuth";
 import { isHoneypotFilled, verifyTurnstile } from "./guard";
 import { HttpError, json, readJsonBody } from "./http";
 import { requireAdmin } from "./idToken";
 import { buildContactEmail, buildReceiptEmail } from "./messages";
+import { runOrderAction } from "./orderAction";
+import { createOrderV1 } from "./orderCreate";
 import { createOrder } from "./orders";
 import { sha256Hex } from "./base64";
 import { validateContact, validateReceipt, validateSignup } from "./validate";
+import { joinWaitlist } from "./waitlist";
+import { OrderError } from "../../shared/errors";
 
 interface Context {
   request: Request;
@@ -116,11 +121,48 @@ async function handleReceipt(ctx: Context): Promise<unknown> {
   return {};
 }
 
+// Build piece 2. The contract is in shared/model.ts.
+
+async function handleOrderV1(ctx: Context): Promise<unknown> {
+  const body = await readPublicForm(ctx);
+  if (!body) return {};
+  return createOrderV1(body, {
+    db: database(ctx),
+    mailer: ctx.mailer,
+    cfg: ctx.cfg,
+    defer: ctx.defer,
+    geocode: censusGeocode
+  });
+}
+
+/** No Turnstile: the route writes no customer data. It reads the settings and calls the geocoder. */
+async function handleDeliveryQuote(ctx: Context): Promise<unknown> {
+  const address = validateQuote(await readJsonBody(ctx.request));
+  return quoteDelivery(address, { db: database(ctx), geocode: censusGeocode });
+}
+
+async function handleWaitlist(ctx: Context): Promise<unknown> {
+  const body = await readPublicForm(ctx);
+  if (!body) return {};
+  await joinWaitlist(body, database(ctx));
+  return {};
+}
+
+async function handleOrderAction(ctx: Context): Promise<unknown> {
+  await requireAdmin(ctx.request.headers.get("Authorization"), ctx.cfg.projectId);
+  const body = await readJsonBody(ctx.request);
+  return runOrderAction(body, { db: database(ctx), mailer: ctx.mailer, cfg: ctx.cfg, defer: ctx.defer });
+}
+
 const POST_ROUTES: Record<string, (ctx: Context) => Promise<unknown>> = {
   "/api/contact": handleContact,
   "/api/signup": handleSignup,
   "/api/orders": handleOrder,
-  "/api/receipts": handleReceipt
+  "/api/receipts": handleReceipt,
+  "/api/v1/orders": handleOrderV1,
+  "/api/v1/delivery-quote": handleDeliveryQuote,
+  "/api/v1/waitlist": handleWaitlist,
+  "/api/admin/orders/action": handleOrderAction
 };
 
 export async function handleRequest(request: Request, env: Env, defer: Context["defer"]): Promise<Response> {
@@ -144,6 +186,12 @@ export async function handleRequest(request: Request, env: Env, defer: Context["
     return json({ ok: true, ...data }, 200, cors);
   } catch (error) {
     if (error instanceof HttpError) return json({ ok: false, error: error.message }, error.status, cors);
+    // The rules in shared/ throw OrderError with a message that is safe to show.
+    if (error instanceof OrderError) return json({ ok: false, error: error.message }, 400, cors);
+    if (error instanceof ContentionError) {
+      console.error("Transaction did not complete", error);
+      return json({ ok: false, error: "We are busy now. Try again." }, 503, cors);
+    }
     console.error("Unhandled error", error);
     return json({ ok: false, error: "Something went wrong. Try again." }, 500, cors);
   }

@@ -10,6 +10,15 @@
 
 import { authHeader } from "./firebaseClient";
 import type { OrderRecord } from "./types";
+import type {
+  CreateOrderInput,
+  CreateOrderResult,
+  DeliveryQuoteInput,
+  DeliveryQuoteResult,
+  OrderActionInput,
+  OrderActionResult,
+  WaitlistInput
+} from "../../shared/model";
 
 const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/+$/, "");
 
@@ -108,4 +117,34 @@ export interface PosReceiptInput {
 export async function sendPosReceipt(input: PosReceiptInput): Promise<{ ok: true }> {
   const auth = await authHeader();
   return post("/api/receipts", input, auth.Authorization ? { Authorization: auth.Authorization } : {});
+}
+
+// ---------------------------------------------------------------------------
+// Build piece 2: events and ordering. Types are in shared/model.ts.
+// ---------------------------------------------------------------------------
+
+
+async function ownerHeaders(): Promise<Record<string, string>> {
+  const auth = await authHeader();
+  return auth.Authorization ? { Authorization: auth.Authorization } : {};
+}
+
+/** POST /api/v1/orders — a live order, a pre-order, or a batch request. */
+export function createOrder(input: CreateOrderInput & PublicFormGuard): Promise<{ ok: true } & Partial<CreateOrderResult>> {
+  return post("/api/v1/orders", input);
+}
+
+/** POST /api/v1/delivery-quote — the delivery fee for an address. Writes nothing. */
+export function quoteDelivery(input: DeliveryQuoteInput): Promise<{ ok: true } & DeliveryQuoteResult> {
+  return post("/api/v1/delivery-quote", input);
+}
+
+/** POST /api/v1/waitlist — "Join the Next Batch". */
+export function joinWaitlist(input: WaitlistInput & PublicFormGuard): Promise<{ ok: true }> {
+  return post("/api/v1/waitlist", input);
+}
+
+/** POST /api/admin/orders/action — owner only. Moves an order to its next state and sends the email. */
+export async function runOrderAction(input: OrderActionInput): Promise<{ ok: true } & OrderActionResult> {
+  return post("/api/admin/orders/action", input, await ownerHeaders());
 }
