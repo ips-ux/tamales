@@ -25,6 +25,26 @@ Agreed on 2026-11-13 by the developer and the owner. Do not change these without
 
 ## Unreleased
 
+### 2026-11-15 - Build piece 3: Money
+
+- **Changed:**
+  - Contract: `shared/moneyModel.ts` (payment routes, `OrderSaleFields`, `LedgerEntry`, refund). New money fields on `OrderRecord`, fee settings on `OrderingSettings`.
+  - Worker: `paypal.ts`, `payments.ts` (`POST /api/v1/payments/create` and `/capture`), `expiry.ts` (cron `*/5 * * * *`), `sale.ts` (handover writes `posTickets/{orderId}` and moves inventory), `refund.ts` (`POST /api/admin/orders/refund`).
+  - A fixed-allotment pre-order now starts `approved` with a hold of `holdMinutes`. A pre-order and a batch request always use PayPal Checkout and carry the online ordering fee.
+  - Site: PayPal buttons and countdown on the tracker, "PayPal or card" for live orders, fee line in the order flow, refund dialog, Payment settings, POS sales list without delete or silent edit, reports rebuilt on the ledger.
+  - Rules: `ledgerEntries` is owner read and create only. A `posTickets` delete needs `isTest == true`.
+- **Why:** Piece 3 of the V1 plan: paid pre-orders and books that keep every change.
+- **Decisions:**
+  - An order is paid only on a verified `COMPLETED` PayPal capture in USD for the exact total, or when the owner marks it paid.
+  - The Worker moves no refund money. The owner sends it, then records it.
+  - An order must be paid before handover.
+  - Reports count a sale at its first recorded amount and count each ledger entry in its own period. A refund before handover does not reduce sales, because no sale exists yet.
+  - The expiry run handles 8 orders for each run, to stay under the free plan limit of 50 subrequests.
+  - The PayPal `invoice_id` is the order number plus 8 characters of the order id, so it is unique.
+  - The kiosk does not offer PayPal for live orders.
+- **Verify:** `npm run build` passes. Site tests: 209 pass. Worker tests: 216 pass. Worker type check and `wrangler deploy --dry-run` pass. Not verified: every PayPal request and response shape, the PayPal JS buttons, `application_context.shipping_preference`, Firestore `:runQuery`, the cron trigger, the rules in an emulator, any screen in a browser.
+- **Next:** Do not merge before PayPal is configured: without `PAYPAL_CLIENT_ID`, pre-orders cannot be paid and fixed-allotment holds expire. Set up the PayPal sandbox, run 1 test payment, then merge. Confirm the PayPal fee rate and the PayPal rules on a fee that a seller adds.
+
 ### 2026-11-15 - Fix: Worker could not reach Firestore
 
 - **Changed:** `worker/src/firestore.ts` wraps the global `fetch` in its default `fetchFn`. New test `worker/test/fetchReceiver.test.ts`.

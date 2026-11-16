@@ -169,7 +169,7 @@ function ActiveKiosk({ event, kioskToken, exit }: ActiveKioskProps) {
             <QRCodePanel
               url={trackerUrl(origin, result.trackerToken)}
               eventName={event.name}
-              title="Scan to track your order on your phone."
+              title={result.state === "approved" ? "Scan to pay on your phone." : "Scan to track your order on your phone."}
               alt="QR code for your order tracker"
             />
           </div>

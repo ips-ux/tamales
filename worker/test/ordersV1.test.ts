@@ -64,7 +64,9 @@ const seed = {
       { miles: 10, feeCents: 1000 }
     ],
     deliveryFeeTaxable: false,
-    paymentWindowHours: 72
+    paymentWindowHours: 72,
+    // A fee share of 0 keeps the online ordering fee out of these tests. money.test.ts tests the fee.
+    feeSharePct: 0
   },
   "settings/orderingPrivate": {
     startAddress: "1 Start St",
@@ -294,11 +296,11 @@ describe("order validation", () => {
     expect(() => validateCreateOrder(liveBody({ customerNote: "x".repeat(501) }))).toThrow("500");
   });
 
-  it("live: requires a payment method of venmo, cashapp or cash", () => {
-    for (const paymentMethod of ["venmo", "cashapp", "cash"]) {
+  it("live: requires a payment method of paypal, venmo, cashapp or cash", () => {
+    for (const paymentMethod of ["paypal", "venmo", "cashapp", "cash"]) {
       expect(validateCreateOrder(liveBody({ paymentMethod })).paymentMethod).toBe(paymentMethod);
     }
-    for (const paymentMethod of ["paypal", "unset", "", undefined]) {
+    for (const paymentMethod of ["zelle", "unset", "", undefined]) {
       expect(() => validateCreateOrder(liveBody({ paymentMethod }))).toThrow("Select a payment method.");
     }
     expect(validateCreateOrder(liveBody({ fulfillment: "delivery" })).fulfillment).toBe("event_pickup");
@@ -423,7 +425,7 @@ describe("pre-order", () => {
       kind: "preorder",
       state: "requested",
       paymentState: "unpaid",
-      paymentMethod: "unset",
+      paymentMethod: "paypal",
       sequence: 1001,
       paymentDescription: "BBT-1001 Jane Doe",
       tamaleCount: 12,
@@ -465,8 +467,9 @@ describe("pre-order", () => {
     it("accepts the order when enough tamales remain, and decreases the stock", async () => {
       const store = setup();
       const result = await createOrderV1(fixed("red", "red-dozen", 1), store.deps, EARLY);
-      expect(result).toMatchObject({ orderNumber: "BBT-1001", state: "received" });
-      expect(orderOf(store, "BBT-1001")).toMatchObject({ state: "received", paymentState: "unpaid" });
+      // The order waits for the payment. money.test.ts tests the hold.
+      expect(result).toMatchObject({ orderNumber: "BBT-1001", state: "approved" });
+      expect(orderOf(store, "BBT-1001")).toMatchObject({ state: "approved", paymentState: "unpaid" });
       expect(store.docs.get("eventStock/evFixed")).toMatchObject({ remaining: { red: 12, green: 6 } });
       await store.done();
       expect(store.sent.map((message) => message.subject)).toEqual(["We received your order: BBT-1001"]);
@@ -691,7 +694,9 @@ describe("tracker", () => {
         "totals",
         "reason",
         "scheduledAtUtc",
-        "updatedAtUtc"
+        "updatedAtUtc",
+        "payByUtc",
+        "refundedCents"
       ].sort()
     );
     const text = JSON.stringify(tracker);
@@ -857,6 +862,7 @@ describe("owner order action", () => {
       const attempt = runOrderAction({ orderId: order.id, action }, store.deps);
       await expect(attempt).rejects.toMatchObject({ status: action === "mark_unpaid_x" ? 400 : 409 });
     }
+    await runOrderAction({ orderId: order.id, action: "mark_paid" }, store.deps);
     await runOrderAction({ orderId: order.id, action: "hand_over" }, store.deps);
     await expect(runOrderAction({ orderId: order.id, action: "cancel" }, store.deps)).rejects.toMatchObject({
       status: 409,
@@ -908,7 +914,11 @@ describe("owner order action", () => {
     expect(store.sent).toHaveLength(1);
     const [message] = store.sent;
     expect(message.subject).toBe("We approved your order: BBT-1001");
-    expect(message.text).toContain("We will send you a payment link.");
+    expect(message.text).not.toContain("We will send you a payment link.");
+    expect(message.text).toContain("Pay by Mon, Nov 16, 11:00 AM MT to confirm it.");
+    expect(message.html).toContain("Pay Now");
+    expect(message.html).toContain(`href="https://bustostamales.com/t/${order.trackerToken}"`);
+    expect(order.paymentMethod).toBe("paypal");
     expect(message.text).toContain("Total: $88.92");
     expect(message.text).toContain("Delivery fee: $15.00");
     expect(message.text).toContain("Date and time: Fri, Nov 20, 5:00 PM MT");
@@ -967,9 +977,15 @@ describe("owner order action", () => {
     expect(store.sent[0].html).toContain(`href="https://bustostamales.com/t/${created.trackerToken}"`);
     expect(store.sent[0].html).toContain("Open Order Tracker");
     expect(order.paymentState).toBe("unpaid");
+    await expect(runOrderAction({ orderId: id, action: "hand_over" }, store.deps)).rejects.toThrow(
+      "Mark the order as paid first."
+    );
+    await runOrderAction({ orderId: id, action: "mark_paid" }, store.deps);
+    await store.done();
+    store.sent.length = 0;
     await runOrderAction({ orderId: id, action: "hand_over" }, store.deps);
     await store.done();
-    expect(store.sent).toHaveLength(1);
+    expect(store.sent).toHaveLength(0);
     expect(store.docs.get(`trackers/${created.trackerToken}`)).toMatchObject({ state: "handed_over" });
   });
 
@@ -1088,6 +1104,7 @@ describe("round 2: retry key, stock flag and owner note", () => {
     const store = setup();
     const created = await createOrderV1(liveBody(), store.deps, LIVE_TIME);
     const id = orderOf(store, created.orderNumber).id;
+    await runOrderAction({ orderId: id, action: "mark_paid" }, store.deps, LIVE_TIME);
     await runOrderAction({ orderId: id, action: "hand_over" }, store.deps, LIVE_TIME);
     await store.done();
     store.sent.length = 0;

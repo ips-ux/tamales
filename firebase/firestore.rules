@@ -20,9 +20,20 @@ service cloud.firestore {
       return request.auth != null && request.auth.token.admin == true;
     }
 
-    // Live POS sales. Owner-only, full access.
+    // The 1 sales ledger. The owner's browser writes a Live POS sale. The Worker
+    // writes the sale of an order at handover. A real sale is never deleted:
+    // a correction is a `ledgerEntries` document. Only a practice sale can be deleted.
     match /posTickets/{ticketId} {
-      allow read, write: if isAdmin();
+      allow read, create, update: if isAdmin();
+      allow delete: if isAdmin() && resource.data.isTest == true;
+    }
+
+    // Refund, void and edit entries. The Worker writes the refund of an order.
+    // The owner's browser writes the void or the edit of a Live POS sale.
+    // An entry is never changed and never deleted.
+    match /ledgerEntries/{entryId} {
+      allow read, create: if isAdmin();
+      allow update, delete: if false;
     }
 
     // Owner-editable business settings (timezone, tax rate, contact info).

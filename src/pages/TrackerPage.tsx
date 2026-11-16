@@ -7,6 +7,7 @@ import type { OrderState, TrackerRecord } from "../../shared/model";
 import { SiteLink } from "../components/SiteFooter";
 import { playReadyChimes, unlockChime, vibrateReady } from "../components/tracker/alertSound";
 import { PaymentPanel } from "../components/tracker/PaymentPanel";
+import { refundText } from "../components/tracker/payRules";
 import { clearActiveTracker, saveActiveTracker } from "../components/tracker/resume";
 import {
   flashIsAlternate,
@@ -156,6 +157,7 @@ export function TrackerPage({ trackerToken }: { trackerToken: string }) {
   const help = paymentHelp(record, handles);
   const final = isFinalTrackerState(record.state);
   const detail = view.type === "message" ? view.detail : ready ? readyDetail(record) : "";
+  const refund = refundText(record);
 
   const pageClass = ["tracker-page", ready ? "tracker-page-ready" : "", flashing ? "tracker-page-flash" : ""]
     .filter(Boolean)
@@ -181,6 +183,11 @@ export function TrackerPage({ trackerToken }: { trackerToken: string }) {
           {ready && <CheckCircle2 size={48} className="tracker-ready-icon" aria-hidden="true" />}
           <h1 className="tracker-headline">{trackerHeadline(view)}</h1>
           {detail && <p className="tracker-detail">{detail}</p>}
+          {record.state === "expired" && (
+            <SiteLink className="button button-primary" href="/order">
+              Place an Order
+            </SiteLink>
+          )}
           <p className="sr-only" aria-live="polite">
             {statusAnnouncement(record)}
           </p>
@@ -224,7 +231,13 @@ export function TrackerPage({ trackerToken }: { trackerToken: string }) {
             </div>
           )}
 
-          <PaymentPanel help={help} />
+          <PaymentPanel
+            help={help}
+            trackerToken={trackerToken}
+            totalCents={record.totals.totalCents}
+            payByUtc={record.payByUtc}
+          />
+          {refund && <p className="tracker-refund">{refund}</p>}
 
           {record.scheduledAtUtc && (
             <p className="tracker-scheduled">

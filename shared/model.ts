@@ -90,8 +90,16 @@ export interface OrderingSettings {
   /** Rings sorted by miles, smallest first. Beyond the last ring is outside the delivery area. */
   deliveryRings: DeliveryRing[];
   deliveryFeeTaxable: boolean;
-  /** Hours an approved order has to pay before it expires. Enforced in piece 3. */
+  /** Hours an approved order has to pay before it expires. */
   paymentWindowHours: number;
+  /** Minutes a fixed-allotment pre-order holds its tamales while the customer pays. */
+  holdMinutes: number;
+  /** PayPal fee rate in basis points of the charged amount, for example 349 = 3.49%. */
+  paypalFeeBps: number;
+  /** PayPal fixed fee for each payment, in cents. */
+  paypalFeeFixedCents: number;
+  /** Percent of the PayPal fee that the customer pays as the online ordering fee. 0 to 100. */
+  feeSharePct: number;
 }
 
 export const orderingDefaults: OrderingSettings = {
@@ -102,7 +110,11 @@ export const orderingDefaults: OrderingSettings = {
   minNoticeDays: 3,
   deliveryRings: [],
   deliveryFeeTaxable: false,
-  paymentWindowHours: 72
+  paymentWindowHours: 72,
+  holdMinutes: 15,
+  paypalFeeBps: 349,
+  paypalFeeFixedCents: 49,
+  feeSharePct: 50
 };
 
 /** `settings/orderingPrivate`: owner only. The Worker reads it. */
@@ -130,14 +142,14 @@ export type Fulfillment = "event_pickup" | "pickup" | "delivery";
 
 /**
  * requested   open-interest pre-order or batch request, waiting for the owner
- * approved    owner approved; waiting for payment (payment arrives in piece 3)
+ * approved    waiting for payment: owner approved, or a fixed-allotment pre-order on hold
  * declined    owner declined
- * received    accepted: a live order, a fixed-allotment pre-order, or a paid approved order
+ * received    accepted: a live order, or a paid approved order
  * preparing   owner started the order
  * ready       owner marked it ready; the tracker alerts
  * handed_over customer has the order
  * canceled    owner canceled
- * expired     approved but not paid in time (piece 3)
+ * expired     approved but not paid in time
  */
 export type OrderState =
   | "requested"
@@ -153,7 +165,7 @@ export type OrderState =
 /** check_payment = the customer says they paid by payment link or will pay cash; the owner confirms. */
 export type PaymentState = "unpaid" | "check_payment" | "paid" | "refunded";
 
-/** paypal arrives in piece 3. "unset" = not selected yet. */
+/** paypal = PayPal Checkout (also shows Venmo inside PayPal). "unset" = not selected yet. */
 export type PaymentMethod = "unset" | "paypal" | "venmo" | "cashapp" | "cash";
 
 export interface OrderCustomer {
@@ -189,7 +201,7 @@ export interface OrderLine {
 export interface OrderTotals {
   subtotalCents: number;
   deliveryFeeCents: number;
-  /** The customer share of the PayPal fee. Always 0 until piece 3. */
+  /** The customer share of the PayPal fee. 0 when the order does not use PayPal Checkout. */
   onlineFeeCents: number;
   taxCents: number;
   totalCents: number;
@@ -264,6 +276,20 @@ export interface OrderRecord {
   payByUtc: string;
   /** True when this order took tamales from eventStock. */
   stockHeld: boolean;
+
+  // Money (build piece 3). See shared/moneyModel.ts.
+  /** PayPal order id from the last "create payment" call. Empty until then. */
+  paypalOrderId: string;
+  /** PayPal capture id. Empty until the payment is captured. */
+  paypalCaptureId: string;
+  /** The fee PayPal kept, from the capture. 0 for other methods. An expense. */
+  paypalFeeCents: number;
+  /** When the payment was confirmed. Empty until then. */
+  paidAtUtc: string;
+  /** Total refunded to the customer so far. */
+  refundedCents: number;
+  /** `posTickets/{saleId}`: the sale written at handover. Empty until then. */
+  saleId: string;
 }
 
 /**
@@ -271,6 +297,9 @@ export interface OrderRecord {
  * It must hold no email address, no phone number, and no street address.
  */
 export interface TrackerRecord {
+  /** Empty until approval. The tracker shows the time that remains to pay. */
+  payByUtc: string;
+  refundedCents: number;
   orderNumber: string;
   kind: OrderKind;
   state: OrderState;
@@ -325,7 +354,7 @@ export interface CreateOrderInput {
   deliveryAddress: string;
   /** Batch only. */
   requested: OrderRequestedTime | null;
-  /** Live only: "venmo", "cashapp" or "cash". Others send "unset". */
+  /** Live only: "paypal", "venmo", "cashapp" or "cash". Others send "unset"; the Worker saves "paypal". */
   paymentMethod: PaymentMethod;
   customerNote: string;
   /**

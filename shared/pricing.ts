@@ -2,7 +2,7 @@
 // The site can use them to show the same numbers before the customer sends the order.
 
 import { OrderError } from "./errors";
-import type { OrderLine, OrderLineInput, OrderTotals } from "./model";
+import type { OrderLine, OrderLineInput, OrderTotals, OrderingSettings } from "./model";
 
 /** The variant id for single tamales. The price is `singlePriceCents` of the menu item. */
 export const SINGLE_VARIANT_ID = "single";
@@ -103,25 +103,50 @@ export function tamalesByItem(
   return counts;
 }
 
+/** The settings that the online ordering fee reads. `OrderingSettings` fits it. */
+export type FeeSettings = Pick<OrderingSettings, "paypalFeeBps" | "paypalFeeFixedCents" | "feeSharePct">;
+
+/**
+ * The online ordering fee: the customer share of the PayPal fee.
+ * round(feeSharePct% of (paypalFeeBps of the pre-fee total + paypalFeeFixedCents)).
+ * The pre-fee total is subtotal + delivery fee + tax. The fee is 0 when the pre-fee total is 0.
+ */
+export function onlineFeeCents(preFeeTotalCents: number, settings: FeeSettings): number {
+  if (!(preFeeTotalCents > 0)) return 0;
+  const sharePct = Math.min(100, Math.max(0, settings.feeSharePct || 0));
+  const rateBps = Math.max(0, settings.paypalFeeBps || 0);
+  const fixedCents = Math.max(0, settings.paypalFeeFixedCents || 0);
+  const paypalFeeCents = (preFeeTotalCents * rateBps) / 10_000 + fixedCents;
+  return Math.round((sharePct / 100) * paypalFeeCents);
+}
+
 export interface TotalsInput {
   lines: Array<Pick<OrderLine, "lineTotalCents">>;
   deliveryFeeCents: number;
   taxRateBps: number;
   deliveryFeeTaxable: boolean;
+  /** True when the order uses PayPal Checkout. Then the online ordering fee applies. Default: false. */
+  usesPayPal?: boolean;
+  /** Required when `usesPayPal` is true. `OrderingSettings` fits it. With none, the fee is 0. */
+  feeSettings?: FeeSettings;
 }
 
-/** Tax = round(taxable x rate / 10000). The online ordering fee is 0 until build piece 3. */
+/**
+ * Tax = round(taxable x rate / 10000). The online ordering fee is not taxed.
+ * It applies only when `usesPayPal` is true.
+ */
 export function computeTotals(input: TotalsInput): OrderTotals {
   const subtotalCents = input.lines.reduce((sum, line) => sum + line.lineTotalCents, 0);
   const deliveryFeeCents = Math.max(0, Math.round(input.deliveryFeeCents || 0));
   const taxableCents = subtotalCents + (input.deliveryFeeTaxable ? deliveryFeeCents : 0);
   const taxCents = Math.round((taxableCents * input.taxRateBps) / 10_000);
-  const onlineFeeCents = 0;
+  const preFeeTotalCents = subtotalCents + deliveryFeeCents + taxCents;
+  const feeCents = input.usesPayPal && input.feeSettings ? onlineFeeCents(preFeeTotalCents, input.feeSettings) : 0;
   return {
     subtotalCents,
     deliveryFeeCents,
-    onlineFeeCents,
+    onlineFeeCents: feeCents,
     taxCents,
-    totalCents: subtotalCents + deliveryFeeCents + onlineFeeCents + taxCents
+    totalCents: preFeeTotalCents + feeCents
   };
 }

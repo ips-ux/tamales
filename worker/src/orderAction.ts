@@ -16,9 +16,11 @@ import {
 } from "./messages";
 import { returnStock } from "./orderCreate";
 import { counts, readOrder, readOrdering, readOrderingPrivate, taxRateFrom, timeZoneFrom, toTracker } from "./orderData";
+import { buildOrderSale, type Actor } from "./sale";
 import { docId, text } from "./validate";
 import type { OrderAction, OrderActionInput, OrderActionResult, OrderRecord } from "../../shared/model";
 import { applyAction, canRunAction, holdsEventStock } from "../../shared/orderState";
+import { tamalesByItem } from "../../shared/pricing";
 
 const ACTIONS: OrderAction[] = [
   "approve",
@@ -64,10 +66,12 @@ export interface ActionDeps {
   mailer: Mailer;
   cfg: Config;
   defer: (work: Promise<unknown>) => void;
+  /** The owner, from the ID token. The sale of a handover records it. */
+  actor?: Actor;
 }
 
 /** Reads the exact pickup place for the payment receipt. Returns null for a delivery. */
-async function pickupPlace(db: Firestore, order: OrderRecord, timeZone: string): Promise<PickupPlace | null> {
+export async function pickupPlace(db: Firestore, order: OrderRecord, timeZone: string): Promise<PickupPlace | null> {
   if (order.eventId) {
     const [place, event] = await Promise.all([db.get(`eventPrivate/${order.eventId}`), db.get(`events/${order.eventId}`)]);
     return {
@@ -132,12 +136,46 @@ export async function runOrderAction(
     const stockPath = `eventStock/${current.eventId}`;
     const stock = givesBack ? await tx.get(stockPath) : null;
 
-    const changes = applyAction(current, input, nowIso, {
+    // The state rules run before the other reads. An order that is not paid stops here.
+    const changes: Partial<OrderRecord> & { updatedAtUtc: string } = applyAction(current, input, nowIso, {
       paymentWindowHours: ordering.paymentWindowHours,
       deliveryFeeTaxable: ordering.deliveryFeeTaxable,
-      taxRateBps: taxRateFrom(business)
+      taxRateBps: taxRateFrom(business),
+      paypalFeeBps: ordering.paypalFeeBps,
+      paypalFeeFixedCents: ordering.paypalFeeFixedCents,
+      feeSharePct: ordering.feeSharePct
     });
+
+    // A handover is a sale: 1 `posTickets` document, and the tamales leave the inventory.
+    const handsOver = input.action === "hand_over";
+    const sold = handsOver ? Object.entries(tamalesByItem(current.items)) : [];
+    const levels: Array<Record<string, unknown> | null> = [];
+    for (const [itemId] of sold) levels.push(await tx.get(`inventory/${itemId}`));
+    if (handsOver) {
+      // The sale id is the order id, so 1 order makes 1 sale.
+      changes.saleId = current.id;
+    }
     const updated: OrderRecord = { ...current, ...changes };
+
+    if (handsOver) {
+      const sale = buildOrderSale(updated, nowIso, deps.actor ?? { email: "", uid: "" });
+      tx.set(`posTickets/${updated.saleId}`, sale as unknown as Record<string, unknown>);
+      sold.forEach(([itemId, tamales], index) => {
+        const level = levels[index];
+        // A menu item with no inventory document starts at 0, as in the Live POS.
+        const stockCount = typeof level?.stockCount === "number" && Number.isFinite(level.stockCount) ? level.stockCount : 0;
+        tx.set(
+          `inventory/${itemId}`,
+          {
+            productId: itemId,
+            productName: current.items.find((line) => line.itemId === itemId)?.itemName ?? "",
+            stockCount: stockCount - tamales,
+            updatedAtUtc: nowIso
+          },
+          ["productId", "productName", "stockCount", "updatedAtUtc"]
+        );
+      });
+    }
 
     if (stock) {
       const remaining = returnStock(counts(stock.remaining), current.items);

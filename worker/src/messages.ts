@@ -164,6 +164,11 @@ function trackerButton(order: OrderRecord, cfg: MailConfig): EmailContent["butto
   return { label: "Open Order Tracker", url: `${cfg.siteOrigin}/t/${order.trackerToken}` };
 }
 
+/** The customer pays on the order tracker. */
+function payButton(order: OrderRecord, cfg: MailConfig): EmailContent["button"] {
+  return { label: "Pay Now", url: `${cfg.siteOrigin}/t/${order.trackerToken}` };
+}
+
 function customerEmail(
   order: OrderRecord,
   subject: string,
@@ -187,10 +192,14 @@ export function buildOrderReceivedEmail(order: OrderRecord, timeZone: string, cf
       details.push({ label: "Payment description", value: order.paymentDescription });
     }
   }
+  // A live order with PayPal Checkout is paid on the order tracker.
+  const payNow = order.kind === "live" && order.paymentMethod === "paypal" && order.paymentState === "unpaid";
   const next =
     order.state === "requested"
       ? "We approve each order before it is final. Wait for our email."
-      : "Open the order tracker to see the status of your order.";
+      : payNow
+        ? "Open the order tracker to pay for your order."
+        : "Open the order tracker to see the status of your order.";
   return customerEmail(
     order,
     "We received your order",
@@ -200,7 +209,34 @@ export function buildOrderReceivedEmail(order: OrderRecord, timeZone: string, cf
       details,
       items: orderItems(order),
       totals: orderTotals(order),
-      button: trackerButton(order, cfg)
+      button: payNow ? payButton(order, cfg) : trackerButton(order, cfg)
+    },
+    cfg
+  );
+}
+
+/** A fixed-allotment pre-order: the tamales are held while the customer pays. */
+export function buildOrderHoldEmail(
+  order: OrderRecord,
+  holdMinutes: number,
+  timeZone: string,
+  cfg: MailConfig
+): OutgoingEmail {
+  const details = orderDetails(order, timeZone);
+  if (order.payByUtc) details.push({ label: "Pay by", value: formatDateTime(order.payByUtc, timeZone) });
+  return customerEmail(
+    order,
+    "We received your order",
+    {
+      heading: "Order",
+      lines: [
+        `Thanks, ${order.customer.firstName}! We hold your tamales for ${holdMinutes} minutes.`,
+        "Pay now to keep your order."
+      ],
+      details,
+      items: orderItems(order),
+      totals: orderTotals(order),
+      button: payButton(order, cfg)
     },
     cfg
   );
@@ -238,21 +274,98 @@ export function buildOrderAlertEmail(order: OrderRecord, timeZone: string, cfg: 
   };
 }
 
-/** "Approved". The payment link arrives in build piece 3, so this email has no pay button. */
+/** "Approved, pay now". It gives the final total, the time limit and the Pay Now button. */
 export function buildOrderApprovedEmail(order: OrderRecord, timeZone: string, cfg: MailConfig): OutgoingEmail {
+  const payBy = order.payByUtc ? formatDateTime(order.payByUtc, timeZone) : "";
+  const details = orderDetails(order, timeZone);
+  if (payBy) details.push({ label: "Pay by", value: payBy });
   return customerEmail(
     order,
     "We approved your order",
     {
       heading: "Order approved",
-      lines: [`Good news, ${order.customer.firstName}! We approved your order.`, "We will send you a payment link."],
-      details: orderDetails(order, timeZone),
+      lines: [
+        `Good news, ${order.customer.firstName}! We approved your order.`,
+        payBy ? `Pay by ${payBy} to confirm it.` : "Pay now to confirm it."
+      ],
+      details,
       items: orderItems(order),
       totals: orderTotals(order),
-      button: trackerButton(order, cfg)
+      button: payButton(order, cfg)
     },
     cfg
   );
+}
+
+/** The time to pay ended. The Worker sends it from the scheduled run. */
+export function buildOrderExpiredEmail(order: OrderRecord, timeZone: string, cfg: MailConfig): OutgoingEmail {
+  return customerEmail(
+    order,
+    "Your order expired",
+    {
+      heading: "Order expired",
+      lines: ["We did not receive the payment in time.", "Send a new order if you still want tamales."],
+      details: orderDetails(order, timeZone),
+      button: { label: "Order Tamales", url: `${cfg.siteOrigin}/order` }
+    },
+    cfg
+  );
+}
+
+/** The owner recorded a refund. The owner sent the money before that. */
+export function buildOrderRefundEmail(
+  order: OrderRecord,
+  refund: { amountCents: number; reason: string; canceled: boolean },
+  timeZone: string,
+  cfg: MailConfig
+): OutgoingEmail {
+  const details = orderDetails(order, timeZone);
+  details.push({ label: "Refund", value: formatMoney(refund.amountCents) });
+  return customerEmail(
+    order,
+    "We sent your refund",
+    {
+      heading: "Refund",
+      lines: [
+        refund.canceled
+          ? `We canceled this order and sent your refund of ${formatMoney(refund.amountCents)}.`
+          : `We sent your refund of ${formatMoney(refund.amountCents)}.`,
+        "The money can take some days to show in your account."
+      ],
+      details,
+      note: refund.reason ? { label: "Reason", text: refund.reason } : undefined
+    },
+    cfg
+  );
+}
+
+/** An alert to the owner about a PayPal payment that needs a decision. */
+export function buildPaymentAlertEmail(
+  order: OrderRecord,
+  alert: { subject: string; lines: string[]; captureId: string; amountCents: number | null },
+  timeZone: string,
+  cfg: MailConfig
+): OutgoingEmail {
+  const details: EmailRow[] = [
+    ...orderDetails(order, timeZone),
+    { label: "Customer", value: `${order.customer.firstName} ${order.customer.lastName}` },
+    { label: "Email", value: order.customer.email },
+    { label: "Order total", value: formatMoney(order.totals.totalCents) }
+  ];
+  if (alert.amountCents !== null) details.push({ label: "PayPal took", value: formatMoney(alert.amountCents) });
+  if (alert.captureId) details.push({ label: "PayPal transaction", value: alert.captureId });
+  return {
+    to: cfg.ownerEmail,
+    replyTo: order.customer.email,
+    subject: `${alert.subject}: ${order.orderNumber}`,
+    content: {
+      heading: "Payment alert",
+      lines: alert.lines,
+      details,
+      button: { label: "Open Admin", url: `${cfg.siteOrigin}/admin` },
+      contactEmail: cfg.ownerEmail
+    }
+  };
 }
 
 /** "Declined" or "canceled", with the reason of the owner. */

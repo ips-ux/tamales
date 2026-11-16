@@ -12,7 +12,7 @@ import { sendEmailSafely, type Mailer } from "./email";
 import type { Config } from "./env";
 import type { Firestore } from "./firestore";
 import { HttpError } from "./http";
-import { buildOrderAlertEmail, buildOrderReceivedEmail } from "./messages";
+import { buildOrderAlertEmail, buildOrderHoldEmail, buildOrderReceivedEmail } from "./messages";
 import {
   counts,
   menuFromDocs,
@@ -54,7 +54,7 @@ import { quantityLabel } from "../../shared/quantity";
 
 const KINDS: OrderKind[] = ["live", "preorder", "batch"];
 const SOURCES: OrderSource[] = ["web", "mobile", "kiosk"];
-const LIVE_METHODS: PaymentMethod[] = ["venmo", "cashapp", "cash"];
+const LIVE_METHODS: PaymentMethod[] = ["paypal", "venmo", "cashapp", "cash"];
 const invalid = () => new HttpError(400, "The request is not valid.");
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -281,11 +281,16 @@ export async function createOrderV1(
     }
   }
 
+  // A pre-order and a batch request always use PayPal Checkout. A live order can select it.
+  const isLive = input.kind === "live";
+  const paymentMethod: PaymentMethod = isLive ? input.paymentMethod : "paypal";
   const totals = computeTotals({
     lines,
     deliveryFeeCents,
     taxRateBps: taxRateFrom(business),
-    deliveryFeeTaxable: ordering.deliveryFeeTaxable
+    deliveryFeeTaxable: ordering.deliveryFeeTaxable,
+    usesPayPal: paymentMethod === "paypal",
+    feeSettings: ordering
   });
 
   const nowIso = now.toISOString();
@@ -297,8 +302,9 @@ export async function createOrderV1(
   });
   if (input.customer.marketingOptIn) await addToEmailList(db, input.customer.email, "order", nowIso);
 
-  const isLive = input.kind === "live";
   const isFixed = input.kind === "preorder" && event?.preorderMode === "fixed";
+  // A fixed-allotment pre-order holds its tamales while the customer pays.
+  const holdUntilUtc = new Date(now.getTime() + ordering.holdMinutes * 60_000).toISOString();
   const dayKey = dateKeyInZone(now, timeZone);
   const counterPath = isLive ? `counters/${liveCounterId(input.eventId, dayKey)}` : "counters/orders";
   const firstSequence = isLive ? 1 : FIRST_RUNNING_SEQUENCE;
@@ -328,9 +334,9 @@ export async function createOrderV1(
       id: orderId,
       kind: input.kind,
       source: input.source,
-      state: isLive || isFixed ? "received" : "requested",
-      paymentState: isLive ? "check_payment" : "unpaid",
-      paymentMethod: input.paymentMethod,
+      state: isLive ? "received" : isFixed ? "approved" : "requested",
+      paymentState: isLive && paymentMethod !== "paypal" ? "check_payment" : "unpaid",
+      paymentMethod,
       orderNumber,
       sequence,
       paymentDescription: paymentDescription({ kind: input.kind, orderNumber, customer: input.customer }),
@@ -351,9 +357,15 @@ export async function createOrderV1(
       trackerToken: newTrackerToken(),
       createdAtUtc: nowIso,
       updatedAtUtc: nowIso,
-      approvedAtUtc: "",
-      payByUtc: "",
-      stockHeld: isFixed
+      approvedAtUtc: isFixed ? nowIso : "",
+      payByUtc: isFixed ? holdUntilUtc : "",
+      stockHeld: isFixed,
+      paypalOrderId: "",
+      paypalCaptureId: "",
+      paypalFeeCents: 0,
+      paidAtUtc: "",
+      refundedCents: 0,
+      saleId: ""
     };
 
     if (isFixed && event) {
@@ -368,7 +380,11 @@ export async function createOrderV1(
   });
 
   if (duplicate) return resultOf(order);
-  deps.defer(sendEmailSafely(deps.mailer, buildOrderReceivedEmail(order, timeZone, cfg)));
+  const firstEmail =
+    order.state === "approved"
+      ? buildOrderHoldEmail(order, ordering.holdMinutes, timeZone, cfg)
+      : buildOrderReceivedEmail(order, timeZone, cfg);
+  deps.defer(sendEmailSafely(deps.mailer, firstEmail));
   if (order.state === "requested") {
     deps.defer(sendEmailSafely(deps.mailer, buildOrderAlertEmail(order, timeZone, cfg)));
   }

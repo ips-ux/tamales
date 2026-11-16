@@ -21,10 +21,12 @@ import {
   type Firestore,
   type WriteBatch
 } from "firebase/firestore";
+import type { LedgerEntry, LedgerEntryType } from "../../shared/moneyModel";
+import { editLedgerFields, voidLedgerFields, type NewLedgerEntry } from "../components/admin/saleRules";
 import { firebaseConfigured, getCurrentUser, getFirebaseApp } from "./firebaseClient";
 import type { MenuProduct, MenuVariant, PosTicketItem } from "./types";
 
-/** The methods a new POS sale can use. PayPal Checkout arrives in build piece 3. */
+/** The methods a new POS sale can use. PayPal Checkout is for orders only. */
 export type PosPaymentMethod = "cash" | "cashapp" | "venmo";
 
 export interface NewPosTicket {
@@ -47,9 +49,20 @@ export interface PosTicketRecord extends Omit<NewPosTicket, "paymentMethod"> {
   status: "paid" | "void";
   soldByEmail: string | null;
   createdAtUtc: string;
+  /** "order" for a sale that the Worker wrote at the handover of an order. See shared/moneyModel.ts. */
+  source: "pos" | "order";
+  /** `orders/{orderId}` for a sale from an order. Empty for a POS sale. */
+  orderId: string;
+  /** Other income. 0 for a POS sale. */
+  deliveryFeeCents: number;
+  /** The customer share of the PayPal fee. Other income. 0 for a POS sale. */
+  onlineFeeCents: number;
+  /** What PayPal kept. An expense. 0 for a POS sale. */
+  paypalFeeCents: number;
 }
 
 const POS_COLLECTION = "posTickets";
+const LEDGER_COLLECTION = "ledgerEntries";
 
 // A single Firestore instance with an on-device cache. The cache lets the POS
 // keep ringing up and reading recent sales with no signal, syncing when back
@@ -177,6 +190,10 @@ function applyStockChange(
   }
 }
 
+function cents(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
 export async function savePosTicket(
   input: NewPosTicket
 ): Promise<{ id: string; ticketNumber: string }> {
@@ -236,7 +253,12 @@ export function watchPosTickets(
           isTest: Boolean(data.isTest),
           status: (data.status as "paid" | "void") ?? "paid",
           soldByEmail: (data.soldByEmail as string | null) ?? null,
-          createdAtUtc: (data.createdAtUtc as string) ?? new Date().toISOString()
+          createdAtUtc: (data.createdAtUtc as string) ?? new Date().toISOString(),
+          source: data.source === "order" ? "order" : "pos",
+          orderId: typeof data.orderId === "string" ? data.orderId : "",
+          deliveryFeeCents: cents(data.deliveryFeeCents),
+          onlineFeeCents: cents(data.onlineFeeCents),
+          paypalFeeCents: cents(data.paypalFeeCents)
         } satisfies PosTicketRecord;
       });
       onData(tickets);
@@ -347,16 +369,47 @@ export interface PosTicketUpdate {
   customerName: string;
 }
 
+const REAL_SALE_RULE = "A real sale cannot be deleted or restored. Void it or record a refund.";
+const ORDER_SALE_RULE = "This sale is from an order. Change it in the order screens.";
+
+/** Adds a ledger entry to a batch. The document id is the entry id. Entries are create-only. */
+function batchLedgerEntry(batch: WriteBatch, database: Firestore, entry: NewLedgerEntry): void {
+  const ref = doc(collection(database, LEDGER_COLLECTION));
+  const user = getCurrentUser();
+  batch.set(ref, {
+    ...entry,
+    id: ref.id,
+    byEmail: user?.email ?? "",
+    isTest: false,
+    createdAtUtc: new Date().toISOString()
+  } satisfies LedgerEntry);
+}
+
+/** Writes 1 ledger entry: a void or an edit of a POS sale. The Worker writes refunds of orders. */
+export async function addLedgerEntry(entry: NewLedgerEntry): Promise<void> {
+  const database = db();
+  const batch = writeBatch(database);
+  batchLedgerEntry(batch, database, entry);
+  await batch.commit();
+}
+
+/**
+ * Changes a POS sale. A real sale also gets an "edit" ledger entry in the same
+ * batch, so the change is on record. A test sale gets no entry.
+ */
 export async function updatePosTicket(
   ticket: PosTicketRecord,
-  updates: PosTicketUpdate
+  updates: PosTicketUpdate,
+  reason: string
 ): Promise<void> {
+  if (ticket.source === "order") throw new Error(ORDER_SALE_RULE);
   const database = db();
   const batch = writeBatch(database);
   batch.update(doc(database, POS_COLLECTION, ticket.id), {
     ...updates,
     updatedAtUtc: new Date().toISOString()
   });
+  if (!ticket.isTest) batchLedgerEntry(batch, database, editLedgerFields(ticket, updates, reason));
   // Reconcile stock with the net item changes (paid, non-test tickets only):
   // quantities that went down come back into stock, increases leave it.
   if (!ticket.isTest && ticket.status === "paid") {
@@ -382,34 +435,80 @@ export async function updatePosTicket(
   await batch.commit();
 }
 
-/** Void keeps the ticket for the audit trail but drops it out of all reporting. */
-export async function setPosTicketStatus(
-  ticket: PosTicketRecord,
-  status: "paid" | "void"
-): Promise<void> {
-  if (ticket.status === status) return;
+/**
+ * Voids a POS sale. The sale stays in the list. A real sale also gets a "void"
+ * ledger entry in the same batch and its items go back to stock.
+ */
+export async function voidPosTicket(ticket: PosTicketRecord, reason: string): Promise<void> {
+  if (ticket.source === "order") throw new Error(ORDER_SALE_RULE);
+  if (ticket.status === "void") return;
   const database = db();
   const batch = writeBatch(database);
   batch.update(doc(database, POS_COLLECTION, ticket.id), {
-    status,
+    status: "void",
     updatedAtUtc: new Date().toISOString()
   });
   if (!ticket.isTest) {
-    // Voiding puts the items back in stock; restoring takes them out again.
-    applyStockChange(batch, database, ticket.items, status === "void" ? 1 : -1);
+    batchLedgerEntry(batch, database, voidLedgerFields(ticket, reason));
+    applyStockChange(batch, database, ticket.items, 1);
   }
   await batch.commit();
 }
 
+/** Makes a voided test sale a paid sale again. A real sale cannot be restored. */
+export async function restoreTestPosTicket(ticket: PosTicketRecord): Promise<void> {
+  if (!ticket.isTest) throw new Error(REAL_SALE_RULE);
+  if (ticket.status === "paid") return;
+  await updateDoc(doc(db(), POS_COLLECTION, ticket.id), {
+    status: "paid",
+    updatedAtUtc: new Date().toISOString()
+  });
+}
+
+/** Deletes a test sale. A real sale is never deleted. */
 export async function deletePosTicket(ticket: PosTicketRecord): Promise<void> {
-  const database = db();
-  const batch = writeBatch(database);
-  batch.delete(doc(database, POS_COLLECTION, ticket.id));
-  // A voided ticket already returned its stock when it was voided.
-  if (!ticket.isTest && ticket.status === "paid") {
-    applyStockChange(batch, database, ticket.items, 1);
+  if (!ticket.isTest) throw new Error(REAL_SALE_RULE);
+  await deleteDoc(doc(db(), POS_COLLECTION, ticket.id));
+}
+
+const ledgerTypes: LedgerEntryType[] = ["refund", "void", "edit"];
+
+/** All ledger entries, newest first. Owner only. */
+export function watchLedgerEntries(
+  onData: (entries: LedgerEntry[]) => void,
+  onError: (error: Error) => void
+): () => void {
+  if (!firebaseConfigured()) {
+    onError(new Error("Firebase is not configured. Add VITE_FIREBASE values to .env.local."));
+    return () => undefined;
   }
-  await batch.commit();
+  return onSnapshot(
+    query(collection(db(), LEDGER_COLLECTION), orderBy("createdAtUtc", "desc")),
+    (snapshot) =>
+      onData(
+        snapshot.docs
+          .map((docSnapshot) => {
+            const data = docSnapshot.data();
+            const text = (value: unknown) => (typeof value === "string" ? value : "");
+            return {
+              id: docSnapshot.id,
+              type: data.type as LedgerEntryType,
+              saleId: text(data.saleId),
+              orderId: text(data.orderId),
+              reference: text(data.reference),
+              amountCents: cents(data.amountCents),
+              taxCents: cents(data.taxCents),
+              reason: text(data.reason),
+              detail: text(data.detail),
+              byEmail: text(data.byEmail),
+              isTest: Boolean(data.isTest),
+              createdAtUtc: text(data.createdAtUtc)
+            } satisfies LedgerEntry;
+          })
+          .filter((entry) => ledgerTypes.includes(entry.type) && entry.createdAtUtc !== "")
+      ),
+    (error) => onError(error)
+  );
 }
 
 // ---------------------------------------------------------------------------

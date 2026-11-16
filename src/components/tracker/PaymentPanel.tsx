@@ -1,6 +1,14 @@
 import { Copy, ExternalLink } from "lucide-react";
 import { useState } from "react";
+import { PayPalPanel } from "./PayPalPanel";
 import type { PaymentHelp } from "./trackerRules";
+
+interface PaymentPanelProps {
+  help: PaymentHelp;
+  trackerToken: string;
+  totalCents: number;
+  payByUtc: string;
+}
 
 /** Copies text. Uses the old copy command when the Clipboard API is not available. */
 async function copyText(value: string): Promise<boolean> {
@@ -28,11 +36,14 @@ async function copyText(value: string): Promise<boolean> {
   }
 }
 
-/** The payment block of the order tracker: a status line, or the copy button and the payment link. */
-export function PaymentPanel({ help }: { help: PaymentHelp }) {
+/** The payment block of the order tracker: a status line, PayPal Checkout, or the copy button and the payment link. */
+export function PaymentPanel({ help, trackerToken, totalCents, payByUtc }: PaymentPanelProps) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   if (help.type === "none") return null;
+  if (help.type === "paypal") {
+    return <PayPalPanel trackerToken={trackerToken} totalCents={totalCents} payByUtc={payByUtc} />;
+  }
   if (help.type === "text") {
     return (
       <section className="tracker-payment" aria-label="Payment">

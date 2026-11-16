@@ -1,5 +1,5 @@
-// Payment methods for a POS sale. The agreed methods are cash, Venmo and
-// Cash App. PayPal Checkout arrives in build piece 3.
+// Payment methods for a POS sale: cash, Venmo and Cash App.
+// PayPal Checkout is for orders only. The customer pays on the order tracker.
 
 import type { PosPaymentMethod } from "../../lib/firestoreClient";
 
@@ -15,9 +15,14 @@ export function isPosPaymentMethod(value: string): value is PosPaymentMethod {
   return (posPaymentMethods as string[]).includes(value);
 }
 
-/** The label of a stored method. An old sale with a removed method shows the stored value. */
+/**
+ * The label of a stored method. A sale from an order can hold "paypal".
+ * An old sale with a removed method shows the stored value.
+ */
 export function posPaymentLabel(value: string): string {
-  return isPosPaymentMethod(value) ? posPaymentLabels[value] : value || "Not recorded";
+  if (isPosPaymentMethod(value)) return posPaymentLabels[value];
+  if (value === "paypal") return "PayPal";
+  return value && value !== "unset" ? value : "Not recorded";
 }
 
 /** The link in the payment QR code. Empty for cash and for a method with no link. */

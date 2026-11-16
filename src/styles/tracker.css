@@ -218,6 +218,36 @@
   display: none;
 }
 
+/* PayPal Checkout */
+.tracker-pay-total {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0;
+  font-weight: 900;
+}
+
+.tracker-pay-wait {
+  margin: 0;
+}
+
+.tracker-paypal {
+  min-width: 0;
+}
+
+.tracker-paypal[hidden] {
+  display: none;
+}
+
+.tracker-refund {
+  margin: 0;
+  font-weight: 900;
+}
+
+.tracker-card > .button {
+  justify-self: start;
+}
+
 .tracker-items {
   display: grid;
   gap: 0.25rem;
@@ -260,6 +290,8 @@
 
 @media (max-width: 600px) {
   .tracker-payment-actions .button,
+  .tracker-payment > .button,
+  .tracker-card > .button,
   .tracker-alerts .button {
     width: 100%;
   }

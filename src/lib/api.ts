@@ -8,6 +8,14 @@
 // Public routes take `turnstileToken` and the honeypot field `website`.
 // Owner routes take a Firebase ID token in the Authorization header.
 
+import type {
+  CapturePaymentInput,
+  CapturePaymentResult,
+  CreatePaymentInput,
+  CreatePaymentResult,
+  RefundOrderInput,
+  RefundOrderResult
+} from "../../shared/moneyModel";
 import { authHeader } from "./firebaseClient";
 import type {
   CreateOrderInput,
@@ -128,4 +136,23 @@ export function joinWaitlist(input: WaitlistInput & PublicFormGuard): Promise<{ 
 /** POST /api/admin/orders/action — owner only. Moves an order to its next state and sends the email. */
 export async function runOrderAction(input: OrderActionInput): Promise<{ ok: true } & OrderActionResult> {
   return post("/api/admin/orders/action", input, await ownerHeaders());
+}
+
+// ---------------------------------------------------------------------------
+// Build piece 3: money. Types are in shared/moneyModel.ts.
+// ---------------------------------------------------------------------------
+
+/** POST /api/v1/payments/create — starts a PayPal Checkout payment for the order of this tracker. */
+export function createPayment(input: CreatePaymentInput): Promise<{ ok: true } & CreatePaymentResult> {
+  return post("/api/v1/payments/create", input);
+}
+
+/** POST /api/v1/payments/capture — takes the approved payment and marks the order paid. */
+export function capturePayment(input: CapturePaymentInput): Promise<{ ok: true } & CapturePaymentResult> {
+  return post("/api/v1/payments/capture", input);
+}
+
+/** POST /api/admin/orders/refund — owner only. Records a refund that the owner already sent. */
+export async function refundOrder(input: RefundOrderInput): Promise<{ ok: true } & RefundOrderResult> {
+  return post("/api/admin/orders/refund", input, await ownerHeaders());
 }

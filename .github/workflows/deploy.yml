@@ -61,6 +61,7 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
           VITE_TURNSTILE_SITE_KEY: ${{ secrets.VITE_TURNSTILE_SITE_KEY }}
+          VITE_PAYPAL_CLIENT_ID: ${{ secrets.VITE_PAYPAL_CLIENT_ID }}
         run: npm run build
 
       # The Worker deploy is skipped until the CLOUDFLARE_API_TOKEN secret
@@ -74,7 +75,7 @@ jobs:
         run: echo "enabled=$HAS_TOKEN" >> "$GITHUB_OUTPUT"
 
       # Worker secrets (FIREBASE_SERVICE_ACCOUNT, RESEND_API_KEY,
-      # TURNSTILE_SECRET_KEY) are set 1 time with `wrangler secret put`.
+      # TURNSTILE_SECRET_KEY, PAYPAL_CLIENT_SECRET) are set 1 time with `wrangler secret put`.
       # They are not in CI. See DEPLOYMENT.md.
       - name: Deploy Worker
         if: steps.cloudflare.outputs.enabled == 'true'

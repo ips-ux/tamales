@@ -563,3 +563,18 @@
     padding: 1rem;
   }
 }
+
+/* Order flow: PayPal Checkout */
+.payment-fee-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.review-payment-note {
+  margin: 0;
+  font-weight: 900;
+}

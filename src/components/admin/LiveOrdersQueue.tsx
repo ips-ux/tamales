@@ -3,20 +3,24 @@ import type { EventRecord, OrderAction, OrderRecord } from "../../../shared/mode
 import { updateEventLiveControls, useEvents } from "../../lib/eventsStore";
 import { formatMoney } from "../../lib/money";
 import { useLiveOrders } from "../../lib/ordersStore";
-import { businessDateKey, businessTodayKey, formatTimeRange } from "../../lib/time";
+import { businessDateKey, businessTodayKey, formatBusinessDateTime, formatTimeRange } from "../../lib/time";
 import type { MenuProduct } from "../../lib/types";
 import { currentEvent, toggleId } from "./eventRules";
-import { ReasonDialog } from "./OrderDialogs";
+import { ReasonDialog, RefundDialog } from "./OrderDialogs";
 import {
+  actionBlocked,
   actionBusyLabels,
   actionLabels,
   availableActions,
+  canRefund,
   customerName,
+  handOverHint,
   lineLabel,
   liveGroupFor,
   liveGroups,
   liveNumber,
   liveOrdersForDay,
+  paymentFacts,
   paymentMethodLabels,
   paymentStateLabels,
   stateBadgeClass,
@@ -144,6 +148,8 @@ export function LiveOrdersQueue() {
   const { orders, loading, failed } = useLiveOrders();
   const actions = useOrderActions();
   const [canceling, setCanceling] = useState<OrderRecord | null>(null);
+  const [refundingId, setRefundingId] = useState("");
+  const refunding = refundingId ? orders.find((order) => order.id === refundingId) ?? null : null;
   const today = liveOrdersForDay(orders, businessTodayKey(), businessDateKey);
 
   async function runAction(order: OrderRecord, action: OrderAction, reason?: string) {
@@ -162,8 +168,11 @@ export function LiveOrdersQueue() {
 
   function renderOrder(order: OrderRecord) {
     const busy = actions.isBusy(order.id);
-    const error = canceling ? "" : actions.errorFor(order.id);
+    const error = canceling || refunding ? "" : actions.errorFor(order.id);
     const orderActions = availableActions(order);
+    const refundable = canRefund(order);
+    const hint = handOverHint(order);
+    const facts = paymentFacts(order, formatBusinessDateTime);
     return (
       <article className="receipt-card live-order" key={order.id}>
         <div className="receipt-head">
@@ -187,26 +196,54 @@ export function LiveOrdersQueue() {
             <span className="muted">{paymentStateLabels[order.paymentState]}</span>
           )}
         </div>
+        {facts.length > 0 && (
+          <ul className="live-order-facts muted">
+            {facts.map((fact) => (
+              <li key={fact.label}>
+                {fact.label} {fact.value}
+              </li>
+            ))}
+          </ul>
+        )}
         {order.customerNote && <p className="live-order-note">{order.customerNote}</p>}
         {error && (
           <p className="form-notice form-notice-error" role="alert">
             {error}
           </p>
         )}
-        {orderActions.length > 0 && (
+        {(orderActions.length > 0 || refundable) && (
           <div className="button-row live-order-actions">
             {orderActions.map((action) => (
               <button
                 key={action}
                 className="button button-small"
                 type="button"
-                disabled={busy || actions.running !== null}
+                disabled={busy || actions.running !== null || actionBlocked(order, action)}
+                aria-describedby={action === "hand_over" && hint ? `pay-first-${order.id}` : undefined}
                 onClick={() => start(order, action)}
               >
                 {busy && actions.running?.action === action ? actionBusyLabels[action] : actionLabels[action]}
               </button>
             ))}
+            {refundable && (
+              <button
+                className="button button-small"
+                type="button"
+                disabled={busy || actions.running !== null}
+                onClick={() => {
+                  actions.clearError();
+                  setRefundingId(order.id);
+                }}
+              >
+                Refund
+              </button>
+            )}
           </div>
+        )}
+        {hint && (
+          <p className="field-help order-card-hint" id={`pay-first-${order.id}`}>
+            {hint}
+          </p>
         )}
       </article>
     );
@@ -249,6 +286,20 @@ export function LiveOrdersQueue() {
           );
         })}
 
+      {refunding && (
+        <RefundDialog
+          order={refunding}
+          title={liveNumber(refunding)}
+          busy={actions.isBusy(refunding.id)}
+          error={actions.errorFor(refunding.id)}
+          onClose={() => setRefundingId("")}
+          onConfirm={(input) =>
+            void actions.refund(input).then((done) => {
+              if (done) setRefundingId("");
+            })
+          }
+        />
+      )}
       {canceling && (
         <ReasonDialog
           title={`Cancel ${liveNumber(canceling)}`}

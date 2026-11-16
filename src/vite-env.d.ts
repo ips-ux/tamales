@@ -5,6 +5,8 @@ interface ImportMetaEnv {
   readonly VITE_API_BASE_URL?: string;
   /** Cloudflare Turnstile site key. Leave it empty in local development. */
   readonly VITE_TURNSTILE_SITE_KEY?: string;
+  /** PayPal client id for PayPal Checkout. With none, the site offers no online payment. */
+  readonly VITE_PAYPAL_CLIENT_ID?: string;
 }
 
 interface ImportMeta {

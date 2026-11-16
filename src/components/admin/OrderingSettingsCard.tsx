@@ -3,8 +3,14 @@ import { FormEvent, useEffect, useState } from "react";
 import { orderingDefaults, type OrderingSettings } from "../../../shared/model";
 import { fetchOrderingPrivate, saveOrderingSettings, watchOrderingSettings } from "../../lib/eventsStore";
 import { buildRings, ringsToRows, type RingRow } from "./deliveryRings";
+import {
+  checkPaymentSettings,
+  feeExample,
+  paymentSettingsToForm,
+  type PaymentSettingsForm
+} from "./paymentSettings";
 
-interface FormState {
+interface FormState extends PaymentSettingsForm {
   pickupEnabled: boolean;
   deliveryEnabled: boolean;
   pickupAreaName: string;
@@ -15,7 +21,6 @@ interface FormState {
   startAddress: string;
   rings: RingRow[];
   deliveryFeeTaxable: boolean;
-  paymentWindowHours: string;
 }
 
 function toForm(settings: OrderingSettings): FormState {
@@ -30,7 +35,7 @@ function toForm(settings: OrderingSettings): FormState {
     startAddress: "",
     rings: ringsToRows(settings.deliveryRings),
     deliveryFeeTaxable: settings.deliveryFeeTaxable,
-    paymentWindowHours: String(settings.paymentWindowHours)
+    ...paymentSettingsToForm(settings)
   };
 }
 
@@ -40,7 +45,7 @@ function wholeNumber(text: string, minimum: number): number | null {
   return value >= minimum ? value : null;
 }
 
-/** Admin > Settings > Ordering: batch requests, pickup, delivery, and the payment time limit. */
+/** Admin > Settings > Ordering: batch requests, pickup, delivery, and payment. */
 export function OrderingSettingsCard() {
   const [form, setForm] = useState<FormState>(() => toForm(orderingDefaults));
   const [storedStartAddress, setStoredStartAddress] = useState("");
@@ -100,10 +105,9 @@ export function OrderingSettingsCard() {
     const problems: string[] = [];
     const minBatchTamales = wholeNumber(form.minBatchTamales, 1);
     const minNoticeDays = wholeNumber(form.minNoticeDays, 0);
-    const paymentWindowHours = wholeNumber(form.paymentWindowHours, 1);
+    const payment = checkPaymentSettings(form);
     if (minBatchTamales === null) problems.push("Enter the minimum batch size as a whole number of 1 or more.");
     if (minNoticeDays === null) problems.push("Enter the days of notice as a whole number of 0 or more.");
-    if (paymentWindowHours === null) problems.push("Enter the payment time limit as a whole number of hours, 1 or more.");
     const rings = buildRings(form.rings);
     if (rings.error) problems.push(rings.error);
     const startAddress = form.startAddress.trim();
@@ -111,9 +115,10 @@ export function OrderingSettingsCard() {
     if (form.deliveryEnabled && !rings.error && rings.rings.length === 0) {
       problems.push("Add 1 delivery ring or more.");
     }
+    problems.push(...payment.errors);
     setErrors(problems);
     setSaved(false);
-    if (problems.length > 0 || minBatchTamales === null || minNoticeDays === null || paymentWindowHours === null) {
+    if (problems.length > 0 || minBatchTamales === null || minNoticeDays === null || payment.values === null) {
       return;
     }
 
@@ -128,7 +133,7 @@ export function OrderingSettingsCard() {
           minNoticeDays,
           deliveryRings: rings.rings,
           deliveryFeeTaxable: form.deliveryFeeTaxable,
-          paymentWindowHours
+          ...payment.values
         },
         {
           startAddress,
@@ -309,18 +314,68 @@ export function OrderingSettingsCard() {
         <span>Charge tax on the delivery fee</span>
       </label>
 
-      <label>
-        Payment time limit, in hours
-        <input
-          type="number"
-          min="1"
-          step="1"
-          inputMode="numeric"
-          value={form.paymentWindowHours}
-          onChange={(input) => set("paymentWindowHours", input.target.value)}
-        />
-        <span className="field-help">An approved order that is not paid in this time expires.</span>
-      </label>
+      <fieldset className="ring-editor payment-settings">
+        <legend>Payment</legend>
+        <label>
+          Hold time, in minutes
+          <input
+            type="number"
+            min="1"
+            step="1"
+            inputMode="numeric"
+            value={form.holdMinutes}
+            onChange={(input) => set("holdMinutes", input.target.value)}
+          />
+          <span className="field-help">A pre-order with a fixed allotment holds its tamales for this time.</span>
+        </label>
+        <label>
+          Payment time limit, in hours
+          <input
+            type="number"
+            min="1"
+            step="1"
+            inputMode="numeric"
+            value={form.paymentWindowHours}
+            onChange={(input) => set("paymentWindowHours", input.target.value)}
+          />
+          <span className="field-help">An approved order that is not paid in this time expires.</span>
+        </label>
+        <label>
+          PayPal fee (%)
+          <input
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            value={form.paypalFeePercent}
+            onChange={(input) => set("paypalFeePercent", input.target.value)}
+          />
+        </label>
+        <label>
+          PayPal fixed fee ($)
+          <input
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            value={form.paypalFeeFixed}
+            onChange={(input) => set("paypalFeeFixed", input.target.value)}
+          />
+        </label>
+        <label>
+          Customer share of the fee (%)
+          <input
+            type="number"
+            min="0"
+            max="100"
+            step="1"
+            inputMode="numeric"
+            value={form.feeSharePct}
+            onChange={(input) => set("feeSharePct", input.target.value)}
+          />
+          <span className="field-help" aria-live="polite">
+            {feeExample(form)}
+          </span>
+        </label>
+      </fieldset>
 
       {saved && (
         <p className="form-notice" role="status">
