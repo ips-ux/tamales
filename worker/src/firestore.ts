@@ -56,7 +56,9 @@ export class Firestore {
   constructor(
     projectId: string,
     private getToken: () => Promise<string>,
-    private fetchFn: typeof fetch = fetch
+    // Wrap the global fetch. Calling it as `this.fetchFn(...)` would pass this
+    // class as the receiver, and Workers then throw "Illegal invocation".
+    private fetchFn: typeof fetch = (input, init) => fetch(input, init)
   ) {
     this.root = `projects/${projectId}/databases/(default)/documents`;
     this.base = `https://firestore.googleapis.com/v1/${this.root}`;

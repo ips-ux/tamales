@@ -15,6 +15,11 @@ If a note needs nothing from you, it says so.
 - A PayPal Business account.
 - Your sign-ins for Cloudflare, Resend and Firebase during setup. You type them in yourself.
 
+## 2026-11-15 - Fix for forms and orders
+
+- A fault stopped the server from saving messages, sign-ups and orders. It is fixed.
+- No customer data was lost. The site had no real customers yet.
+
 ## 2026-11-14 - Events and ordering
 
 - You can now add events in Admin, under Events. Each event has a link and a QR code for the kiosk and for phones.
