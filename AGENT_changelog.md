@@ -25,6 +25,14 @@ Agreed on 2026-11-13 by the developer and the owner. Do not change these without
 
 ## Unreleased
 
+### 2026-11-15 - Fix: Worker could not reach Firestore
+
+- **Changed:** `worker/src/firestore.ts` wraps the global `fetch` in its default `fetchFn`. New test `worker/test/fetchReceiver.test.ts`.
+- **Why:** The class called `this.fetchFn(...)`, so the global `fetch` ran with the class as its receiver. Workers throw "Illegal invocation" for that. Every route that reads or writes Firestore failed with HTTP 500 in production since piece 1. Unit tests did not see it, because they inject a stub `fetch`.
+- **Decisions:** Never store the global `fetch` as a method and call it through `this`. Wrap it in an arrow function.
+- **Verify:** The new test fails on the old code with "Illegal invocation" and passes on the fix. Worker tests: 155 pass. Live check after deploy: see the next entry or the pull request.
+- **Next:** Send 1 real contact message and 1 real order from the live site.
+
 ### 2026-11-14 - Build piece 2: Events and ordering
 
 - **Changed:**
