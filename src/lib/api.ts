@@ -1,5 +1,5 @@
 // Client for the Cloudflare Worker in worker/. The Worker is the only door for
-// public writes (orders, contact messages, email list signups) and it sends all
+// public writes (orders, contact messages, waitlist, email list signups) and it sends all
 // email. See docs/V1_FUNDAMENTALS.md section 3.
 //
 // Contract: every route is POST with a JSON body and returns JSON.
@@ -9,7 +9,15 @@
 // Owner routes take a Firebase ID token in the Authorization header.
 
 import { authHeader } from "./firebaseClient";
-import type { OrderRecord } from "./types";
+import type {
+  CreateOrderInput,
+  CreateOrderResult,
+  DeliveryQuoteInput,
+  DeliveryQuoteResult,
+  OrderActionInput,
+  OrderActionResult,
+  WaitlistInput
+} from "../../shared/model";
 
 const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/+$/, "");
 
@@ -79,23 +87,6 @@ export function sendSignup(input: SignupInput): Promise<{ ok: true }> {
   return post("/api/signup", input);
 }
 
-export interface OrderInput extends PublicFormGuard {
-  /**
-   * The order as the browser built it. The Worker reads prices and the tax
-   * rate from Firestore and computes the totals again; it does not trust the
-   * totals, status, or order number in this record.
-   */
-  order: OrderRecord;
-}
-
-/**
- * POST /api/orders — saves the order, emails the customer and the owner.
- * `order` is absent when the Worker drops the request (filled honeypot).
- */
-export function sendOrder(input: OrderInput): Promise<{ ok: true; order?: OrderRecord }> {
-  return post("/api/orders", input);
-}
-
 export interface PosReceiptInput {
   /** Firestore id of the POS sale (posTickets document). */
   ticketId: string;
@@ -108,4 +99,33 @@ export interface PosReceiptInput {
 export async function sendPosReceipt(input: PosReceiptInput): Promise<{ ok: true }> {
   const auth = await authHeader();
   return post("/api/receipts", input, auth.Authorization ? { Authorization: auth.Authorization } : {});
+}
+
+// ---------------------------------------------------------------------------
+// Build piece 2: events and ordering. Types are in shared/model.ts.
+// ---------------------------------------------------------------------------
+
+async function ownerHeaders(): Promise<Record<string, string>> {
+  const auth = await authHeader();
+  return auth.Authorization ? { Authorization: auth.Authorization } : {};
+}
+
+/** POST /api/v1/orders — a live order, a pre-order, or a batch request. */
+export function createOrder(input: CreateOrderInput & PublicFormGuard): Promise<{ ok: true } & Partial<CreateOrderResult>> {
+  return post("/api/v1/orders", input);
+}
+
+/** POST /api/v1/delivery-quote — the delivery fee for an address. Writes nothing. */
+export function quoteDelivery(input: DeliveryQuoteInput): Promise<{ ok: true } & DeliveryQuoteResult> {
+  return post("/api/v1/delivery-quote", input);
+}
+
+/** POST /api/v1/waitlist — "Join the Next Batch". */
+export function joinWaitlist(input: WaitlistInput & PublicFormGuard): Promise<{ ok: true }> {
+  return post("/api/v1/waitlist", input);
+}
+
+/** POST /api/admin/orders/action — owner only. Moves an order to its next state and sends the email. */
+export async function runOrderAction(input: OrderActionInput): Promise<{ ok: true } & OrderActionResult> {
+  return post("/api/admin/orders/action", input, await ownerHeaders());
 }

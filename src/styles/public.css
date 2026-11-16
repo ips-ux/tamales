@@ -257,3 +257,309 @@
     flex-basis: 100%;
   }
 }
+
+/* Order flow (build piece 2): /order, /e/{id} and the kiosk. 1 step on each screen. */
+.order-flow {
+  display: grid;
+  gap: 1rem;
+}
+
+.order-flow-panel {
+  display: grid;
+  gap: 1rem;
+  box-shadow: var(--shadow);
+}
+
+.order-flow-step {
+  margin: 0;
+  font-size: 1.25rem;
+  scroll-margin-top: 92px;
+}
+
+.order-flow-step:focus {
+  outline: none;
+}
+
+.order-flow-panel .error-summary,
+.order-flow-panel .allergen-notice,
+.order-flow-notice {
+  margin: 0;
+}
+
+/* The total and the main action stay in view at the bottom of the screen. */
+.order-flow-bar {
+  position: sticky;
+  z-index: 20;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: #fffaf1;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.order-flow-total {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.order-flow-total span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.order-flow-total strong {
+  font-size: 1.15rem;
+}
+
+.order-flow-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.product-stock {
+  margin: 0.5rem 0 0;
+  color: var(--agave-dark);
+  font-weight: 900;
+}
+
+.variant-row .variant-total {
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.order-address {
+  display: grid;
+  gap: 0.75rem;
+  justify-items: start;
+}
+
+.order-address label {
+  width: 100%;
+}
+
+.order-notice-plain {
+  color: var(--ink);
+  background: #fffaf1;
+  border-color: var(--line);
+}
+
+.order-optin {
+  min-height: 44px;
+  font-weight: 700 !important;
+}
+
+.payment-choices label {
+  align-items: center;
+  min-height: 72px;
+  font-size: 1.1rem;
+}
+
+.payment-choices .muted {
+  margin: 0;
+}
+
+.order-summary-block .summary-lines {
+  margin-top: 0;
+}
+
+.order-summary-block .summary-lines small {
+  display: block;
+  color: var(--muted);
+}
+
+.order-summary-note,
+.review-policy {
+  margin: 0;
+}
+
+.review-details {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.review-details div {
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.review-details dt {
+  font-weight: 900;
+}
+
+.review-details dd {
+  margin: 0.25rem 0 0;
+}
+
+.review-line {
+  display: block;
+}
+
+/* "Heads up!" dialog */
+.heads-up-card {
+  padding: 1.5rem;
+  background: var(--cream);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.heads-up-card h2 {
+  margin: 0;
+  font-size: 2rem;
+}
+
+.heads-up-actions {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.heads-up-actions .button {
+  width: 100%;
+  height: auto;
+  min-height: 48px;
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+  white-space: normal;
+  text-align: center;
+}
+
+/* Order page: the choices that are open now. */
+.order-page-notice {
+  margin-bottom: 1rem;
+}
+
+.order-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.order-choice-card {
+  display: grid;
+  align-content: start;
+  gap: 0.75rem;
+  padding: 1.5rem;
+  background: #fffaf1;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.order-choice-card h2 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.order-choice-card p {
+  margin: 0;
+}
+
+.order-choice-card .status-badge {
+  justify-self: start;
+}
+
+.order-choice-card .button {
+  justify-self: start;
+}
+
+.order-choice-facts {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-weight: 700;
+}
+
+.order-choice-facts li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.order-choice-facts svg {
+  flex: 0 0 auto;
+  color: var(--red);
+}
+
+.order-choice-mode {
+  font-weight: 900;
+}
+
+.order-empty p,
+.event-message p {
+  margin-bottom: 1rem;
+}
+
+.event-message {
+  text-align: center;
+}
+
+.event-message h1 {
+  margin-right: auto;
+  margin-left: auto;
+}
+
+/* Home: link to the order tracker of an open order on this phone. */
+.hero-track-link {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-height: 44px;
+  margin-left: auto;
+  color: var(--masa);
+  font-weight: 900;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@media (max-width: 920px) {
+  .order-choice-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .order-flow-bar {
+    margin: 0 -1rem;
+    padding: 0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom));
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+    border-radius: 0;
+  }
+
+  .order-flow-total {
+    grid-template-columns: 1fr auto;
+    align-items: baseline;
+  }
+
+  .order-flow-actions {
+    display: grid;
+    grid-template-columns: auto 1fr;
+  }
+
+  .order-flow-actions .button {
+    width: 100%;
+  }
+
+  .order-flow-actions .button:only-child {
+    grid-column: 1 / -1;
+  }
+
+  .order-address .button,
+  .order-choice-card .button {
+    justify-self: stretch;
+    width: 100%;
+  }
+
+  .order-choice-card {
+    padding: 1rem;
+  }
+}

@@ -11,8 +11,9 @@ service cloud.firestore {
       the service-account key, which is not subject to these rules.
 
       The owner reads and writes from the browser with the `admin: true`
-      custom claim. The public reads the menu, events, locations, business
-      settings, site content and site images directly.
+      custom claim. The public reads the menu, events, event stock, business
+      settings, order settings, payment account names, site content and site
+      images directly. A customer gets 1 tracker by its token.
     */
 
     function isAdmin() {
@@ -50,8 +51,62 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
-    // Payment accounts for the POS QR checkout. Owner-only.
+    // Payment account names (Venmo, Cash App). Public read: the phone of the
+    // customer builds the payment link from them. Only the owner edits them.
     match /settings/payments {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Order settings: pickup and delivery switches, delivery rings and fees,
+    // batch request limits. Public read. No address is in this document.
+    match /settings/ordering {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Delivery start address and the exact batch pickup address. Owner only.
+    // The Worker reads it with the service-account key.
+    match /settings/orderingPrivate {
+      allow read, write: if isAdmin();
+    }
+
+    // Events. Public read, so the site shows them. Only the owner edits them.
+    // An event holds the area name, never the exact address.
+    match /events/{eventId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Tamales that remain for fixed-allotment pre-orders. Public read.
+    // The Worker changes the counts in a transaction. The owner can set them.
+    match /eventStock/{eventId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // The exact pickup address of an event. Owner only. The Worker sends it
+    // to the customer in the payment receipt.
+    match /eventPrivate/{eventId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Order tracker. The document id is an unguessable token. Public get by
+    // token, no public list. Only the Worker writes it. It holds no email
+    // address, no phone number and no street address.
+    match /trackers/{token} {
+      allow get: if true;
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    // Waitlist entries. The Worker creates them. Contains customer PII.
+    match /waitlist/{entryId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Order number counters. The Worker changes them in a transaction.
+    match /counters/{counterId} {
       allow read, write: if isAdmin();
     }
 
@@ -60,22 +115,6 @@ service cloud.firestore {
     // temporary password). Owner-only, same as every other admin collection.
     match /admins/{uid} {
       allow read, write: if isAdmin();
-    }
-
-    // Pickup windows ("pop-up events") and pickup locations backing the
-    // pre-order form. There is no separate status doc — the customer site
-    // derives "next event" and whether pre-orders are open for it directly
-    // from these windows.
-    // Publicly readable so the customer site can show what's available;
-    // only the owner edits them from the admin Availability page.
-    match /availabilityWindows/{windowId} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-
-    match /pickupLocations/{locationId} {
-      allow read: if true;
-      allow write: if isAdmin();
     }
 
     // Stock levels and the adjustment audit log. Owner-only.
@@ -98,16 +137,12 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
-    // Pre-orders. The Worker creates each order after it validates the
-    // request and computes the prices. The owner lists and updates orders.
-    // `get` stays public for now: the confirmation page reads 1 order by its
-    // unguessable token (the document id). Build piece 2 replaces this with
-    // `trackers` documents and closes the public get.
+    // Orders. Owner read only. The Worker creates and changes each order
+    // with the service-account key: it checks the state table, computes the
+    // money and sends the email. A customer reads `trackers`, never an order.
     match /orders/{orderId} {
-      allow get: if true;
-      allow list: if isAdmin();
-      allow update, delete: if isAdmin();
-      allow create: if false;
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // Email list signups. The Worker creates them. Owner-only in the browser.

@@ -1,12 +1,4 @@
-import type {
-  AvailabilityWindow,
-  BusinessSettings,
-  MenuProduct,
-  PaymentSettings,
-  OrderRecord,
-  PickupLocation,
-  VendorSession
-} from "../lib/types";
+import type { BusinessSettings, MenuProduct, PaymentSettings } from "../lib/types";
 
 export const businessSettings: BusinessSettings = {
   id: "default",
@@ -23,23 +15,6 @@ export const businessSettings: BusinessSettings = {
   instagramHandle: "",
   taxRateBps: 870
 };
-
-export const pickupLocations: PickupLocation[] = [
-  {
-    id: "pop-up-westminster",
-    name: "Westminster Pop-Up",
-    address: "Exact pickup pin shared after confirmation",
-    instructions: "Pull up during the selected window and text when you arrive.",
-    active: true
-  },
-  {
-    id: "event-northglenn",
-    name: "Northglenn Vendor Table",
-    address: "Event booth location shared by text",
-    instructions: "Bring your order number to the vendor table.",
-    active: true
-  }
-];
 
 export const menuProducts: MenuProduct[] = [
   {
@@ -118,164 +93,8 @@ export const menuProducts: MenuProduct[] = [
   }
 ];
 
-export const availabilityWindows: AvailabilityWindow[] = [
-  {
-    id: "sat-morning-westminster",
-    locationId: "pop-up-westminster",
-    label: "Saturday morning batch",
-    fulfillmentType: "scheduled_pickup",
-    startsAtUtc: "2026-06-20T16:00:00.000Z",
-    endsAtUtc: "2026-06-20T18:00:00.000Z",
-    cutoffAtUtc: "2026-06-19T23:00:00.000Z",
-    capacity: 28,
-    committedOrders: 11,
-    active: true,
-    preordersEnabled: true,
-    instructions: "Orders are packed warm. Pickup details are confirmed after acceptance."
-  },
-  {
-    id: "sun-event-northglenn",
-    locationId: "event-northglenn",
-    label: "Sunday vendor table",
-    fulfillmentType: "event_pickup",
-    startsAtUtc: "2026-06-21T19:00:00.000Z",
-    endsAtUtc: "2026-06-21T22:00:00.000Z",
-    cutoffAtUtc: "2026-06-21T16:00:00.000Z",
-    capacity: 36,
-    committedOrders: 18,
-    active: true,
-    preordersEnabled: true,
-    vendorSessionId: "northglenn-market",
-    instructions: "Pick up at the Bangin Bustos table during event hours."
-  }
-];
-
-export const vendorSessions: VendorSession[] = [
-  {
-    id: "northglenn-market",
-    publicToken: "vendor_demo_northglenn",
-    name: "Northglenn Summer Market",
-    eventLocation: "Northglenn vendor table",
-    startsAtUtc: "2026-06-21T18:30:00.000Z",
-    endsAtUtc: "2026-06-21T23:00:00.000Z",
-    enabledProductIds: ["red-tamales", "green-tamales"],
-    availabilityWindowId: "sun-event-northglenn",
-    ordersEnabled: true,
-    contactCaptureEnabled: true,
-    active: true,
-    exitPinRequired: true
-  }
-];
-
 export const paymentSettings: PaymentSettings = {
   id: "default",
   cashAppCashtag: "BanginBustos",
-  paypalMe: "banginbustos",
-  venmoHandle: "banginbustos",
-  zelleContact: "banginbustostamales@gmail.com",
-  applePayEnabled: false,
-  applePayNote: "Apple Pay needs a merchant/payment-service setup before live use."
+  venmoHandle: "banginbustos"
 };
-
-export const sampleOrders: OrderRecord[] = [
-  {
-    id: "ord_1001",
-    orderNumber: "BBT-2026-1001",
-    publicToken: "sample_confirmation_token",
-    status: "new",
-    paymentStatus: "unpaid",
-    fulfillmentType: "scheduled_pickup",
-    availabilityWindowId: "sat-morning-westminster",
-    customer: {
-      name: "Marisol Vega",
-      mobile: "(720) 555-0148",
-      email: "marisol@example.com",
-      preferredContact: "text",
-      notes: "Please text when the pickup pin is ready."
-    },
-    bulk: {
-      enabled: false,
-      occasion: "",
-      guestCount: "",
-      desiredReadyTime: "",
-      packagingRequest: "",
-      additionalInstructions: ""
-    },
-    items: [
-      {
-        productId: "red-tamales",
-        variantId: "red-dozen",
-        productName: "Red Tamales",
-        variantLabel: "Dozen",
-        unitQuantity: 12,
-        unitPriceCents: 3400,
-        quantity: 2,
-        lineTotalCents: 6800
-      }
-    ],
-    totals: {
-      subtotalCents: 6800,
-      taxCents: 592,
-      feeCents: 0,
-      totalCents: 7392
-    },
-    createdAtUtc: "2026-06-17T18:30:00.000Z",
-    updatedAtUtc: "2026-06-17T18:30:00.000Z",
-    privateNotes: "Confirm before Friday afternoon."
-  },
-  {
-    id: "ord_1002",
-    orderNumber: "BBT-2026-1002",
-    publicToken: "sample_confirmed_token",
-    status: "confirmed",
-    paymentStatus: "deposit_paid",
-    fulfillmentType: "event_pickup",
-    availabilityWindowId: "sun-event-northglenn",
-    customer: {
-      name: "Daniel Ramos",
-      mobile: "(303) 555-0119",
-      email: "daniel@example.com",
-      preferredContact: "phone",
-      notes: "Needs a call because reception is spotty at work."
-    },
-    bulk: {
-      enabled: true,
-      occasion: "Birthday lunch",
-      guestCount: "24",
-      desiredReadyTime: "1:30 PM",
-      packagingRequest: "Separate red and green by tray",
-      additionalInstructions: "Label each tray clearly."
-    },
-    items: [
-      {
-        productId: "red-tamales",
-        variantId: "red-dozen",
-        productName: "Red Tamales",
-        variantLabel: "Dozen",
-        unitQuantity: 12,
-        unitPriceCents: 3400,
-        quantity: 1,
-        lineTotalCents: 3400
-      },
-      {
-        productId: "green-tamales",
-        variantId: "green-dozen",
-        productName: "Green Tamales",
-        variantLabel: "Dozen",
-        unitQuantity: 12,
-        unitPriceCents: 3400,
-        quantity: 1,
-        lineTotalCents: 3400
-      }
-    ],
-    totals: {
-      subtotalCents: 6800,
-      taxCents: 592,
-      feeCents: 0,
-      totalCents: 7392
-    },
-    createdAtUtc: "2026-06-16T15:05:00.000Z",
-    updatedAtUtc: "2026-06-17T03:10:00.000Z",
-    privateNotes: "Deposit received by cash app."
-  }
-];

@@ -1,0 +1,282 @@
+/* Order tracker styles (build piece 2). Tokens come from global.css. */
+
+.tracker-state {
+  display: grid;
+  justify-items: center;
+  gap: 1rem;
+  text-align: center;
+}
+
+.tracker-state h1 {
+  font-size: clamp(2rem, 6vw, 3.2rem);
+  max-width: none;
+}
+
+.tracker-page {
+  transition: background-color 400ms ease;
+}
+
+.tracker-page-ready {
+  background: var(--agave);
+}
+
+.tracker-page-flash {
+  background: var(--agave-dark);
+}
+
+.tracker-shell {
+  display: grid;
+  gap: 1rem;
+}
+
+.tracker-card {
+  display: grid;
+  gap: 1rem;
+  padding: clamp(1rem, 4vw, 2rem);
+  background: #fffaf1;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.tracker-number,
+.tracker-event,
+.tracker-detail,
+.tracker-keep-open,
+.tracker-scheduled {
+  margin: 0;
+}
+
+.tracker-number strong {
+  display: block;
+  font-size: 1.25rem;
+  overflow-wrap: anywhere;
+}
+
+.tracker-headline {
+  margin: 0;
+  max-width: none;
+  font-size: clamp(2rem, 6vw, 3.4rem);
+}
+
+.tracker-page-ready .tracker-headline,
+.tracker-ready-icon {
+  color: var(--agave);
+}
+
+.tracker-detail {
+  font-size: 1.2rem;
+}
+
+.tracker-steps {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tracker-step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: center;
+  min-height: 56px;
+  padding: 0.5rem 1rem;
+  background: var(--cream);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.tracker-step-number {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  color: var(--charcoal);
+  font-weight: 900;
+  background: var(--cream-2);
+  border-radius: 50%;
+}
+
+.tracker-step-name {
+  font-weight: 900;
+}
+
+.tracker-step-word {
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.tracker-step-done .tracker-step-number {
+  color: var(--cream);
+  background: var(--muted);
+}
+
+.tracker-step-done .tracker-step-word,
+.tracker-step-next .tracker-step-word {
+  color: var(--muted);
+}
+
+.tracker-step-now {
+  border: 2px solid var(--red);
+}
+
+.tracker-step-now .tracker-step-number {
+  color: var(--cream);
+  background: var(--red);
+}
+
+.tracker-step-now .tracker-step-word {
+  color: var(--red-dark);
+}
+
+.tracker-page-ready .tracker-step-now {
+  border-color: var(--agave);
+}
+
+.tracker-page-ready .tracker-step-now .tracker-step-number {
+  background: var(--agave);
+}
+
+.tracker-page-ready .tracker-step-now .tracker-step-word {
+  color: var(--agave-dark);
+}
+
+.tracker-alerts {
+  display: grid;
+  justify-items: start;
+  gap: 0.5rem;
+}
+
+.tracker-keep-open {
+  font-weight: 900;
+}
+
+.tracker-alerts-on,
+.tracker-offline,
+.tracker-payment-status {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-weight: 900;
+}
+
+.tracker-alerts-on,
+.tracker-payment-status {
+  color: var(--agave-dark);
+}
+
+.tracker-offline {
+  padding: 0.75rem 1rem;
+  color: var(--cream);
+  background: var(--charcoal);
+  border-radius: var(--radius);
+}
+
+.tracker-offline span {
+  font-weight: 400;
+}
+
+.tracker-payment {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: var(--cream);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.tracker-payment-note,
+.tracker-payment-description,
+.tracker-copy-status {
+  margin: 0;
+}
+
+.tracker-payment-note {
+  font-weight: 900;
+}
+
+.tracker-payment-description {
+  padding: 0.75rem;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+  background: #fffdf8;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+}
+
+.tracker-payment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.tracker-copy-status:empty {
+  display: none;
+}
+
+.tracker-items {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 1rem 0 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.tracker-money {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+}
+
+.tracker-money div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.tracker-money dt,
+.tracker-money dd {
+  margin: 0;
+}
+
+.tracker-money dd {
+  font-weight: 700;
+}
+
+.tracker-money-total {
+  padding-top: 0.5rem;
+  font-weight: 900;
+  border-top: 1px solid var(--line);
+}
+
+.tracker-money-total dd {
+  font-weight: 900;
+}
+
+@media (max-width: 600px) {
+  .tracker-payment-actions .button,
+  .tracker-alerts .button {
+    width: 100%;
+  }
+
+  .tracker-alerts {
+    justify-items: stretch;
+  }
+}
+
+/* A solid color with reduced motion. The page does not flash. */
+@media (prefers-reduced-motion: reduce) {
+  .tracker-page,
+  .tracker-page-flash {
+    transition: none;
+  }
+
+  .tracker-page-ready.tracker-page-flash {
+    background: var(--agave);
+  }
+}

@@ -59,6 +59,16 @@ export async function upsertCustomer(db: Firestore, input: CustomerInput): Promi
   return id;
 }
 
+/**
+ * Adds the email address to the email list: `marketingSignups/{sha256 of email}`.
+ * 1 address makes 1 document. A second signup does not change the first.
+ */
+export async function addToEmailList(db: Firestore, email: string, source: string, nowIso: string): Promise<void> {
+  const clean = email.trim().toLowerCase();
+  const path = `marketingSignups/${await sha256Hex(clean)}`;
+  if (!(await db.get(path))) await db.set(path, { email: clean, source, createdAtUtc: nowIso });
+}
+
 /** Splits "Jane Mary Doe" into first name "Jane" and last name "Mary Doe". */
 export function splitName(name: string): { firstName: string; lastName: string } {
   const parts = name.trim().split(/\s+/);

@@ -1,4 +1,6 @@
-// Pure helpers for the contact messages list (Admin > Contacts).
+// Pure helpers for the contact messages list and the waitlist (Admin > Contacts).
+
+import type { WaitlistEntry } from "../../../shared/model";
 
 const REPLY_SUBJECT = "Re: Your message to Bangin Bustos Tamales";
 
@@ -20,4 +22,19 @@ export function contactPhoneHref(phone: string): string {
 /** "First Last", or a fallback when the message has no name. */
 export function contactDisplayName(firstName: string, lastName: string): string {
   return [firstName.trim(), lastName.trim()].filter(Boolean).join(" ") || "No name";
+}
+
+/** CSV rows for the waitlist. `formatDate` gives the date text for a UTC time. */
+export function waitlistCsv(entries: WaitlistEntry[], formatDate: (iso: string) => string): string[][] {
+  return [
+    ["First name", "Last name", "Email", "Interest", "Event", "Date"],
+    ...entries.map((entry) => [
+      entry.firstName,
+      entry.lastName,
+      entry.email,
+      entry.interest,
+      entry.eventName,
+      entry.createdAtUtc ? formatDate(entry.createdAtUtc) : ""
+    ])
+  ];
 }

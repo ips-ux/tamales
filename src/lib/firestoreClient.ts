@@ -22,24 +22,10 @@ import {
   type WriteBatch
 } from "firebase/firestore";
 import { firebaseConfigured, getCurrentUser, getFirebaseApp } from "./firebaseClient";
-import type {
-  AvailabilityWindow,
-  FulfillmentType,
-  MenuProduct,
-  MenuVariant,
-  OrderRecord,
-  OrderStatus,
-  PickupLocation,
-  PosTicketItem
-} from "./types";
+import type { MenuProduct, MenuVariant, PosTicketItem } from "./types";
 
-export type PosPaymentMethod =
-  | "cash"
-  | "cashapp"
-  | "paypal"
-  | "venmo"
-  | "zelle"
-  | "applepay";
+/** The methods a new POS sale can use. PayPal Checkout arrives in build piece 3. */
+export type PosPaymentMethod = "cash" | "cashapp" | "venmo";
 
 export interface NewPosTicket {
   items: PosTicketItem[];
@@ -53,8 +39,10 @@ export interface NewPosTicket {
   isTest: boolean;
 }
 
-export interface PosTicketRecord extends NewPosTicket {
+export interface PosTicketRecord extends Omit<NewPosTicket, "paymentMethod"> {
   id: string;
+  /** A stored value. An old sale can hold a method that is removed now, for example "zelle". */
+  paymentMethod: string;
   ticketNumber: string;
   status: "paid" | "void";
   soldByEmail: string | null;
@@ -243,7 +231,7 @@ export function watchPosTickets(
           subtotalCents: (data.subtotalCents as number) ?? 0,
           taxCents: (data.taxCents as number) ?? 0,
           totalCents: (data.totalCents as number) ?? 0,
-          paymentMethod: (data.paymentMethod as PosPaymentMethod) ?? "cash",
+          paymentMethod: typeof data.paymentMethod === "string" ? data.paymentMethod : "cash",
           customerName: (data.customerName as string) ?? "",
           isTest: Boolean(data.isTest),
           status: (data.status as "paid" | "void") ?? "paid",
@@ -312,11 +300,7 @@ export async function saveBusinessSettings(settings: EditableBusinessSettings): 
 // only the signed-in POS reads them.
 export interface EditablePaymentSettings {
   cashAppCashtag: string;
-  paypalMe: string;
   venmoHandle: string;
-  zelleContact: string;
-  applePayEnabled: boolean;
-  applePayNote: string;
 }
 
 const PAYMENT_SETTINGS_DOC = "payments";
@@ -339,11 +323,7 @@ export function watchPaymentSettings(
       }
       const settings: Partial<EditablePaymentSettings> = {};
       if (typeof data.cashAppCashtag === "string") settings.cashAppCashtag = data.cashAppCashtag;
-      if (typeof data.paypalMe === "string") settings.paypalMe = data.paypalMe;
       if (typeof data.venmoHandle === "string") settings.venmoHandle = data.venmoHandle;
-      if (typeof data.zelleContact === "string") settings.zelleContact = data.zelleContact;
-      if (typeof data.applePayEnabled === "boolean") settings.applePayEnabled = data.applePayEnabled;
-      if (typeof data.applePayNote === "string") settings.applePayNote = data.applePayNote;
       onData(settings);
     },
     (error) => onError(error)
@@ -362,7 +342,8 @@ export interface PosTicketUpdate {
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
-  paymentMethod: PosPaymentMethod;
+  /** A current method, or the stored value of an old sale that the owner did not change. */
+  paymentMethod: string;
   customerName: string;
 }
 
@@ -432,198 +413,15 @@ export async function deletePosTicket(ticket: PosTicketRecord): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Availability: the pickup-window ("pop-up event") and pickup-location
-// collections that back the pre-order form. These were fixture-only before
-// this feature; the fixtures in src/data/fixtures.ts now serve only as seed
-// content and an offline/unconfigured fallback, the same role the menu
-// fixture plays. There is no separate "current status" doc — the next event
-// and whether pre-orders are open for it are derived directly from these
-// windows (see isWindowSelectable/nextUpcomingEvent in lib/time.ts).
-// ---------------------------------------------------------------------------
-
-const AVAILABILITY_WINDOWS_COLLECTION = "availabilityWindows";
-
-function mapAvailabilityWindowDoc(id: string, data: Record<string, unknown>): AvailabilityWindow {
-  return {
-    id,
-    locationId: (data.locationId as string) ?? "",
-    label: (data.label as string) ?? "",
-    fulfillmentType: (data.fulfillmentType as FulfillmentType) ?? "scheduled_pickup",
-    startsAtUtc: (data.startsAtUtc as string) ?? "",
-    endsAtUtc: (data.endsAtUtc as string) ?? "",
-    cutoffAtUtc: (data.cutoffAtUtc as string) ?? "",
-    capacity: (data.capacity as number) ?? 0,
-    committedOrders: (data.committedOrders as number) ?? 0,
-    active: Boolean(data.active),
-    preordersEnabled: data.preordersEnabled === undefined ? true : Boolean(data.preordersEnabled),
-    instructions: (data.instructions as string) ?? "",
-    vendorSessionId: (data.vendorSessionId as string) || undefined
-  };
-}
-
-export function watchAvailabilityWindows(
-  onData: (windows: AvailabilityWindow[]) => void,
-  onError: (error: Error) => void
-): () => void {
-  if (!firebaseConfigured()) {
-    onError(new Error("Firebase is not configured."));
-    return () => undefined;
-  }
-  const windowsQuery = query(
-    collection(db(), AVAILABILITY_WINDOWS_COLLECTION),
-    orderBy("startsAtUtc")
-  );
-  return onSnapshot(
-    windowsQuery,
-    (snapshot) => {
-      onData(
-        snapshot.docs.map((docSnapshot) => mapAvailabilityWindowDoc(docSnapshot.id, docSnapshot.data()))
-      );
-    },
-    (error) => onError(error)
-  );
-}
-
-export async function saveAvailabilityWindow(window: AvailabilityWindow): Promise<void> {
-  if (!firebaseConfigured()) {
-    throw new Error("Firebase is not configured. Add VITE_FIREBASE values to .env.local.");
-  }
-  const { id, ...data } = window;
-  await setDoc(doc(db(), AVAILABILITY_WINDOWS_COLLECTION, id), data);
-}
-
-export async function deleteAvailabilityWindow(id: string): Promise<void> {
-  await deleteDoc(doc(db(), AVAILABILITY_WINDOWS_COLLECTION, id));
-}
-
-/** One-time migration: copies the fixture windows into Firestore the first
- * time an admin loads the owner area with an empty collection. */
-export async function seedAvailabilityWindowsIfEmpty(
-  windows: AvailabilityWindow[]
-): Promise<boolean> {
-  if (!firebaseConfigured()) return false;
-  const database = db();
-  const existing = await getDocs(
-    query(collection(database, AVAILABILITY_WINDOWS_COLLECTION), limit(1))
-  );
-  if (!existing.empty) return false;
-  const batch = writeBatch(database);
-  for (const window of windows) {
-    const { id, ...data } = window;
-    batch.set(doc(database, AVAILABILITY_WINDOWS_COLLECTION, id), data);
-  }
-  await batch.commit();
-  return true;
-}
-
-const PICKUP_LOCATIONS_COLLECTION = "pickupLocations";
-
-function mapPickupLocationDoc(id: string, data: Record<string, unknown>): PickupLocation {
-  return {
-    id,
-    name: (data.name as string) ?? "",
-    address: (data.address as string) ?? "",
-    instructions: (data.instructions as string) ?? "",
-    active: Boolean(data.active)
-  };
-}
-
-export function watchPickupLocations(
-  onData: (locations: PickupLocation[]) => void,
-  onError: (error: Error) => void
-): () => void {
-  if (!firebaseConfigured()) {
-    onError(new Error("Firebase is not configured."));
-    return () => undefined;
-  }
-  return onSnapshot(
-    collection(db(), PICKUP_LOCATIONS_COLLECTION),
-    (snapshot) => {
-      onData(
-        snapshot.docs.map((docSnapshot) => mapPickupLocationDoc(docSnapshot.id, docSnapshot.data()))
-      );
-    },
-    (error) => onError(error)
-  );
-}
-
-export async function savePickupLocation(location: PickupLocation): Promise<void> {
-  if (!firebaseConfigured()) {
-    throw new Error("Firebase is not configured. Add VITE_FIREBASE values to .env.local.");
-  }
-  const { id, ...data } = location;
-  await setDoc(doc(db(), PICKUP_LOCATIONS_COLLECTION, id), data);
-}
-
-export async function deletePickupLocation(id: string): Promise<void> {
-  await deleteDoc(doc(db(), PICKUP_LOCATIONS_COLLECTION, id));
-}
-
-/** One-time migration: copies the fixture locations into Firestore the first
- * time an admin loads the owner area with an empty collection. */
-export async function seedPickupLocationsIfEmpty(locations: PickupLocation[]): Promise<boolean> {
-  if (!firebaseConfigured()) return false;
-  const database = db();
-  const existing = await getDocs(
-    query(collection(database, PICKUP_LOCATIONS_COLLECTION), limit(1))
-  );
-  if (!existing.empty) return false;
-  const batch = writeBatch(database);
-  for (const location of locations) {
-    const { id, ...data } = location;
-    batch.set(doc(database, PICKUP_LOCATIONS_COLLECTION, id), data);
-  }
-  await batch.commit();
-  return true;
-}
-
-// ---------------------------------------------------------------------------
-// Orders. The Worker creates each order (src/lib/api.ts sendOrder); the
-// browser does not write to this collection for a customer. The document id
-// is the unguessable publicToken, so the confirmation link can fetch exactly
-// one order and nothing else.
+// Orders. Only the Worker writes `orders`. The owner screens read them through
+// src/lib/ordersStore.ts. The customer reads `trackers/{token}`, never an order.
 // ---------------------------------------------------------------------------
 
 const ORDERS_COLLECTION = "orders";
 
-function mapOrderDoc(id: string, data: Record<string, unknown>): OrderRecord {
-  const record = data as unknown as OrderRecord;
-  return {
-    ...record,
-    id,
-    status: (data.status as OrderStatus) ?? "new",
-    items: Array.isArray(data.items) ? record.items : [],
-    privateNotes: (data.privateNotes as string) ?? ""
-  };
-}
-
-export async function fetchOrderByToken(publicToken: string): Promise<OrderRecord | null> {
-  if (!firebaseConfigured()) return null;
-  const snapshot = await getDoc(doc(db(), ORDERS_COLLECTION, publicToken));
-  if (!snapshot.exists()) return null;
-  return mapOrderDoc(snapshot.id, snapshot.data());
-}
-
-export function watchOrders(
-  onData: (orders: OrderRecord[]) => void,
-  onError: (error: Error) => void
-): () => void {
-  if (!firebaseConfigured()) {
-    onError(new Error("Firebase is not configured."));
-    return () => undefined;
-  }
-  const ordersQuery = query(collection(db(), ORDERS_COLLECTION), orderBy("createdAtUtc", "desc"));
-  return onSnapshot(
-    ordersQuery,
-    (snapshot) => {
-      onData(snapshot.docs.map((docSnapshot) => mapOrderDoc(docSnapshot.id, docSnapshot.data())));
-    },
-    (error) => onError(error)
-  );
-}
-
-// Lightweight count for the nav badge — a filtered query instead of loading
-// every order, so it's cheap to keep subscribed in SiteHeader.
+// Count for the nav badge: V1 orders that wait for approval (state "requested").
+// A filtered query, so it is cheap to keep subscribed in SiteHeader. An order
+// of the old model has no `state` field and does not match.
 export function watchNewPreorderCount(
   onCount: (count: number) => void,
   onError: (error: Error) => void
@@ -632,7 +430,7 @@ export function watchNewPreorderCount(
     onError(new Error("Firebase is not configured."));
     return () => undefined;
   }
-  const newOrdersQuery = query(collection(db(), ORDERS_COLLECTION), where("status", "==", "new"));
+  const newOrdersQuery = query(collection(db(), ORDERS_COLLECTION), where("state", "==", "requested"));
   return onSnapshot(
     newOrdersQuery,
     (snapshot) => onCount(snapshot.size),
@@ -640,12 +438,6 @@ export function watchNewPreorderCount(
   );
 }
 
-export async function updateOrderStatus(id: string, status: OrderStatus): Promise<void> {
-  await updateDoc(doc(db(), ORDERS_COLLECTION, id), {
-    status,
-    updatedAtUtc: new Date().toISOString()
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Inventory: live stock levels per menu item plus an adjustment audit log.

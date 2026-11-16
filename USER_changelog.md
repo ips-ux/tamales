@@ -15,6 +15,17 @@ If a note needs nothing from you, it says so.
 - A PayPal Business account.
 - Your sign-ins for Cloudflare, Resend and Firebase during setup. You type them in yourself.
 
+## 2026-11-14 - Events and ordering
+
+- You can now add events in Admin, under Events. Each event has a link and a QR code for the kiosk and for phones.
+- For each event, you can sell a fixed number of tamales as pre-orders, or approve each pre-order yourself.
+- Customers can send a batch request for pickup or delivery. You set the delivery distances and fees in Settings, under Ordering.
+- At an event, customers order on their phone or at the kiosk. Live POS chimes when an order comes in. You can pause phone orders and mark items sold out.
+- Each customer gets a page that tracks the order. It buzzes and changes color when you mark the order ready.
+- Each event has a prep sheet and a pickup list that you can print.
+- Online payment comes in the next piece. Until then, customers pay with Venmo, Cash App or cash, and you mark the order paid.
+- From you: create your first event, and add your Venmo and Cash App names in Settings.
+
 ## 2026-11-13 - Your accounts are connected
 
 - Your website name, bustostamales.com, now points at your site. It goes live after a short security step finishes.

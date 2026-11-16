@@ -11,7 +11,6 @@ import {
   Mail,
   Menu,
   Settings,
-  Store,
   UtensilsCrossed,
   Users,
   X,
@@ -60,13 +59,12 @@ const adminGroups: NavGroup[] = [
     label: "Catalog",
     links: [
       { href: "/admin/menu", label: "Menu", icon: UtensilsCrossed },
-      { href: "/admin/availability", label: "Availability", icon: Clock }
+      { href: "/admin/events", label: "Events", icon: Clock }
     ]
   },
   {
     label: "Business",
     links: [
-      { href: "/admin/vendor", label: "Vendor", icon: Store },
       { href: "/admin/content", label: "Site Content", icon: FileText },
       { href: "/admin/contacts", label: "Contacts", icon: Users },
       { href: "/admin/settings", label: "Settings", icon: Settings },
@@ -82,7 +80,7 @@ export function SiteHeader({ isAdmin = false }: SiteHeaderProps) {
   const [newPreorderCount, setNewPreorderCount] = useState(0);
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
 
-  // Live badge for unacknowledged pre-orders. Only subscribed on admin
+  // Live badge for orders that wait for approval. Only subscribed on admin
   // routes; permission/offline errors are swallowed and just show no badge,
   // matching how other admin watchers degrade (see AdminPage.tsx).
   useEffect(() => {
@@ -146,7 +144,9 @@ export function SiteHeader({ isAdmin = false }: SiteHeaderProps) {
                       <link.icon size={17} aria-hidden="true" />
                       {link.label}
                       {link.href === "/admin/preorders" && newPreorderCount > 0 && (
-                        <span className="nav-badge">{newPreorderCount}</span>
+                        <span className="nav-badge" aria-label={`${newPreorderCount} waiting for approval`}>
+                          {newPreorderCount}
+                        </span>
                       )}
                       {link.href === "/admin/contacts" && unreadMessageCount > 0 && (
                         <span className="nav-badge" aria-label={`${unreadMessageCount} new`}>

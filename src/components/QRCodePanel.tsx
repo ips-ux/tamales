@@ -1,17 +1,21 @@
-import { Maximize2, X } from "lucide-react";
+import { Maximize2, Printer, X } from "lucide-react";
 import QRCode from "qrcode";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { printElement } from "./admin/print";
 
 interface QRCodePanelProps {
   url: string;
   eventName: string;
   title?: string;
   alt?: string;
+  /** True adds a Print button. The printed page is a table sign: the title, the event name and the QR code. */
+  printable?: boolean;
 }
 
-export function QRCodePanel({ url, eventName, title = "Scan to Order", alt }: QRCodePanelProps) {
+export function QRCodePanel({ url, eventName, title = "Scan to Order", alt, printable = false }: QRCodePanelProps) {
   const [dataUrl, setDataUrl] = useState("");
   const [fullScreen, setFullScreen] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
   const shortUrl = useMemo(() => url.replace(/^https?:\/\//, ""), [url]);
 
   useEffect(() => {
@@ -32,7 +36,7 @@ export function QRCodePanel({ url, eventName, title = "Scan to Order", alt }: QR
   }, [url]);
 
   return (
-    <div className={fullScreen ? "qr-panel qr-panel-fullscreen" : "qr-panel"}>
+    <div className={fullScreen ? "qr-panel qr-panel-fullscreen" : "qr-panel"} ref={panelRef}>
       <div className="qr-header">
         <div className="brand-lockup">
           <img className="brand-logo" src="/media/logo1.webp" alt="" />
@@ -41,14 +45,27 @@ export function QRCodePanel({ url, eventName, title = "Scan to Order", alt }: QR
             <small>{eventName}</small>
           </span>
         </div>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label={fullScreen ? "Close full-screen QR" : "Open full-screen QR"}
-          onClick={() => setFullScreen((value) => !value)}
-        >
-          {fullScreen ? <X size={22} /> : <Maximize2 size={22} />}
-        </button>
+        <div className="qr-actions">
+          {printable && (
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={`Print the sign: ${title}`}
+              disabled={!dataUrl}
+              onClick={() => printElement(panelRef.current)}
+            >
+              <Printer size={22} />
+            </button>
+          )}
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={fullScreen ? "Close full-screen QR" : "Open full-screen QR"}
+            onClick={() => setFullScreen((value) => !value)}
+          >
+            {fullScreen ? <X size={22} /> : <Maximize2 size={22} />}
+          </button>
+        </div>
       </div>
       {dataUrl && <img className="qr-image" src={dataUrl} alt={alt ?? `QR code for ${eventName}`} />}
       <p className="fallback-url">{shortUrl}</p>

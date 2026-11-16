@@ -1,19 +1,39 @@
 import { ArrowRight, CalendarClock } from "lucide-react";
-import { quantityLabel } from "../components/publicForm";
+import { useState } from "react";
+import { preorderIsOpen } from "../../shared/eventRules";
+import { quantityLabel } from "../../shared/quantity";
 import { SiteLink } from "../components/SiteFooter";
-import { useAvailabilityWindows } from "../lib/availabilityStore";
+import { activeTrackerToken } from "../components/tracker/resume";
+import { useEvents } from "../lib/eventsStore";
 import { useMenuProducts } from "../lib/menuStore";
 import { formatMoney } from "../lib/money";
+import { eventIsOpenNow, nextEvent, useNow } from "../lib/publicData";
 import { useSiteContent, useSiteImage } from "../lib/siteContent";
-import { formatWindow, isWindowSelectable, nextUpcomingEvent } from "../lib/time";
+import { formatWindow } from "../lib/time";
 
 export function HomePage() {
   const content = useSiteContent();
   const heroPhoto = useSiteImage("hero");
   const menuProducts = useMenuProducts().filter((product) => product.status !== "inactive");
-  const availabilityWindows = useAvailabilityWindows();
-  const nextEvent = nextUpcomingEvent(availabilityWindows);
-  const preorderOpen = nextEvent ? isWindowSelectable(nextEvent) : false;
+  const { events } = useEvents();
+  const now = useNow();
+  const [trackerToken] = useState(() => activeTrackerToken());
+
+  const openNow = events
+    .filter((event) => eventIsOpenNow(event, now))
+    .sort((a, b) => new Date(a.startsAtUtc).getTime() - new Date(b.startsAtUtc).getTime())[0];
+  const upcoming = nextEvent(events, now);
+  const preorderOpen = upcoming ? preorderIsOpen(upcoming, now) : false;
+
+  let stripLabel = "Next event";
+  let stripText = "No events are on the calendar. Check back soon.";
+  if (openNow) {
+    stripLabel = "Open now";
+    stripText = `We are open now at ${openNow.areaName}.`;
+  } else if (upcoming) {
+    stripLabel = preorderOpen ? "Pre-orders are open" : "Next event";
+    stripText = `${upcoming.name}, ${upcoming.areaName}. ${formatWindow(upcoming)}`;
+  }
 
   return (
     <main>
@@ -41,21 +61,31 @@ export function HomePage() {
             <SiteLink className="button button-ghost" href="/about">
               Read Our Story
             </SiteLink>
-            <SiteLink className="button button-primary" href="/order">
-              Place an Order
-              <ArrowRight size={19} aria-hidden="true" />
-            </SiteLink>
+            {openNow ? (
+              <SiteLink className="button button-primary" href={`/e/${encodeURIComponent(openNow.id)}`}>
+                Order Now
+                <ArrowRight size={19} aria-hidden="true" />
+              </SiteLink>
+            ) : (
+              <SiteLink className="button button-primary" href="/order">
+                Place an Order
+                <ArrowRight size={19} aria-hidden="true" />
+              </SiteLink>
+            )}
           </div>
         </div>
         <div className="hero-info-strip hero-next-event">
           <div>
             <CalendarClock size={19} aria-hidden="true" />
             <span>
-              <strong>{preorderOpen ? "Pre-orders are open" : "Next event"}</strong>
-              {nextEvent
-                ? `${nextEvent.label}. ${formatWindow(nextEvent)}`
-                : "No events are on the calendar. Check back soon."}
+              <strong>{stripLabel}</strong>
+              {stripText}
             </span>
+            {trackerToken && (
+              <SiteLink className="hero-track-link" href={`/t/${encodeURIComponent(trackerToken)}`}>
+                Track your order
+              </SiteLink>
+            )}
           </div>
         </div>
       </section>

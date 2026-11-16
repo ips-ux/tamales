@@ -77,11 +77,16 @@ describe("request handler", () => {
 
   it("answers ok and saves nothing when the honeypot is filled", async () => {
     // No service account and no network: a save attempt would give 503.
-    for (const path of ["/api/contact", "/api/signup", "/api/orders"]) {
+    for (const path of ["/api/contact", "/api/signup"]) {
       const response = await handleRequest(post(path, { website: "https://spam.example" }), {}, defer);
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
     }
+  });
+
+  it("has no route for the old order model", async () => {
+    const response = await handleRequest(post("/api/orders", { website: "" }), {}, defer);
+    expect(response.status).toBe(404);
   });
 
   it("returns a 400 with a message for an invalid form", async () => {

@@ -5,15 +5,16 @@ import { PosModeHeader } from "./components/PosModeHeader";
 import { AdminGate } from "./components/AdminGate";
 import { AboutPage } from "./pages/AboutPage";
 import { AdminPage } from "./pages/AdminPage";
-import { ConfirmationPage } from "./pages/ConfirmationPage";
 import { ContactPage } from "./pages/ContactPage";
+import { EventOrderPage } from "./pages/EventOrderPage";
 import { HomePage } from "./pages/HomePage";
+import { KioskPage } from "./pages/KioskPage";
 import { LegalPage } from "./pages/LegalPage";
 import { LoginPage } from "./pages/LoginPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { OrderPage } from "./pages/OrderPage";
+import { TrackerPage } from "./pages/TrackerPage";
 import { UpdatesPage } from "./pages/UpdatesPage";
-import { VendorPage } from "./pages/VendorPage";
 
 function usePathname() {
   const [path, setPath] = useState(window.location.pathname);
@@ -31,6 +32,17 @@ function usePathname() {
   return path;
 }
 
+/** The decoded value of the 1 path part that `pattern` captures, or "". */
+function pathParam(route: string, pattern: RegExp): string {
+  const raw = route.match(pattern)?.[1];
+  if (!raw) return "";
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return "";
+  }
+}
+
 export function navigate(to: string) {
   window.history.pushState({}, "", to);
   document.dispatchEvent(new Event("bbt:navigation"));
@@ -42,21 +54,24 @@ export function App() {
   const route = useMemo(() => path.replace(/\/+$/, "") || "/", [path]);
   const isAdmin = route.startsWith("/admin");
   const isPosMode = route.startsWith("/admin/pos") || route.startsWith("/admin/orders");
-  const isVendor = route.startsWith("/vendor/");
-  const confirmationToken = route.match(/^\/order\/confirmation\/([^/]+)$/)?.[1];
-  const vendorToken = route.match(/^\/vendor\/([^/]+)$/)?.[1];
+  const eventId = pathParam(route, /^\/e\/([^/]+)$/);
+  const trackerToken = pathParam(route, /^\/t\/([^/]+)$/);
+  const kioskToken = pathParam(route, /^\/kiosk\/([^/]+)$/);
+
+  // The kiosk has no header and no footer.
+  if (kioskToken) return <KioskPage kioskToken={kioskToken} />;
 
   let page = <NotFoundPage />;
   if (route === "/") page = <HomePage />;
   else if (route === "/order") page = <OrderPage />;
-  else if (confirmationToken) page = <ConfirmationPage publicToken={confirmationToken} />;
+  else if (eventId) page = <EventOrderPage key={eventId} eventId={eventId} />;
+  else if (trackerToken) page = <TrackerPage key={trackerToken} trackerToken={trackerToken} />;
   else if (route === "/about") page = <AboutPage />;
   else if (route === "/contact") page = <ContactPage />;
   else if (route === "/login") page = <LoginPage />;
   else if (route === "/updates") page = <UpdatesPage />;
   else if (route === "/privacy") page = <LegalPage kind="privacy" />;
   else if (route === "/terms") page = <LegalPage kind="terms" />;
-  else if (isVendor && vendorToken) page = <VendorPage sessionToken={vendorToken} />;
   else if (isAdmin) {
     page = (
       <AdminGate>
@@ -65,8 +80,7 @@ export function App() {
     );
   }
 
-  // The kiosk has no header and no footer. Admin has a header and no footer.
-  if (isVendor && vendorToken) return page;
+  // Admin has a header and no footer.
   if (isAdmin) {
     return (
       <>

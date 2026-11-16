@@ -1,0 +1,300 @@
+/* Kiosk styles (build piece 2). Tokens come from global.css. */
+
+.kiosk-shell {
+  position: relative;
+  min-height: 100svh;
+  padding: clamp(1rem, 4vw, 2rem);
+  color: var(--cream);
+  background:
+    linear-gradient(rgba(23, 19, 17, 0.7), rgba(23, 19, 17, 0.9)),
+    var(--kiosk-photo, url("/media/tamales_hero.webp")) center/cover,
+    var(--charcoal);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.kiosk-frame {
+  display: grid;
+  align-content: start;
+  gap: 1.5rem;
+  width: min(980px, 100%);
+  margin: 0 auto;
+}
+
+.kiosk-brand {
+  display: flex;
+}
+
+.kiosk-brand .brand-chip img {
+  height: 56px;
+}
+
+.kiosk-shell h1 {
+  max-width: none;
+  color: var(--cream);
+  font-size: clamp(2.2rem, 6vw, 4rem);
+}
+
+.kiosk-panel h1 {
+  color: var(--charcoal);
+}
+
+.kiosk-message,
+.kiosk-home {
+  display: grid;
+  gap: 1.5rem;
+  padding-top: clamp(1rem, 8vh, 4rem);
+}
+
+.kiosk-message p {
+  margin: 0;
+  font-size: 1.45rem;
+}
+
+.kiosk-event-name {
+  margin: 0;
+}
+
+.kiosk-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.kiosk-tile {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 1rem;
+  align-items: center;
+  min-height: 132px;
+  padding: 1.5rem;
+  color: var(--charcoal);
+  font-size: 1.45rem;
+  font-weight: 900;
+  text-align: left;
+  background: rgba(255, 247, 234, 0.95);
+  border: 1px solid rgba(255, 247, 234, 0.4);
+  border-radius: var(--radius);
+}
+
+.kiosk-tile span {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.kiosk-tile-primary {
+  color: var(--cream);
+  background: var(--red);
+  border-color: var(--red);
+}
+
+.kiosk-tile:disabled {
+  color: var(--cream);
+  background: var(--charcoal-2);
+  border-color: rgba(255, 247, 234, 0.3);
+}
+
+.kiosk-tile-reason {
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.kiosk-back {
+  justify-self: start;
+  min-height: 56px;
+  padding: 0.75rem 1.5rem;
+  color: var(--charcoal);
+  font-size: 1.25rem;
+  background: var(--cream);
+}
+
+.kiosk-panel {
+  display: grid;
+  gap: 1rem;
+  padding: clamp(1rem, 4vw, 2rem);
+  color: var(--ink);
+  background: rgba(255, 250, 241, 0.98);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.kiosk-panel p {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.kiosk-form input,
+.kiosk-form textarea {
+  min-height: 56px;
+  font-size: 1.2rem;
+}
+
+.kiosk-form .toggle-row {
+  min-height: 56px;
+  font-size: 1.2rem;
+}
+
+.kiosk-form .toggle-row input {
+  min-height: 22px;
+}
+
+.kiosk-form-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.kiosk-form-actions .button,
+.kiosk-done {
+  min-height: 56px;
+  padding: 0.75rem 2rem;
+  font-size: 1.2rem;
+}
+
+.kiosk-thanks {
+  justify-items: center;
+  text-align: center;
+}
+
+.kiosk-success-icon {
+  color: var(--agave);
+}
+
+.kiosk-order-number {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.kiosk-order-number strong {
+  color: var(--charcoal);
+  font-size: clamp(2rem, 6vw, 3.4rem);
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.kiosk-thanks-qr {
+  width: min(420px, 100%);
+}
+
+.kiosk-scan {
+  display: grid;
+  justify-items: center;
+}
+
+.kiosk-scan .qr-panel {
+  width: min(720px, 100%);
+}
+
+.kiosk-scan .qr-image {
+  width: min(560px, 100%, 62vh);
+}
+
+.kiosk-story {
+  max-width: 62ch;
+}
+
+.kiosk-exit-control {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 40;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-bottom-left-radius: var(--radius);
+  touch-action: none;
+}
+
+.kiosk-exit-control:focus-visible {
+  background: rgba(255, 247, 234, 0.15);
+}
+
+.kiosk-exit-card {
+  display: grid;
+  gap: 1rem;
+  color: var(--ink);
+  text-align: center;
+  user-select: none;
+}
+
+.kiosk-exit-card h2 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.kiosk-pin-dots {
+  margin: 0;
+  font-size: 2rem;
+  letter-spacing: 0.5rem;
+}
+
+.kiosk-pin-message {
+  min-height: 1.65em;
+  margin: 0;
+  color: var(--red-dark);
+  font-weight: 900;
+}
+
+.kiosk-pin-pad {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.kiosk-pin-pad button {
+  display: grid;
+  place-items: center;
+  min-height: 64px;
+  color: var(--charcoal);
+  font-size: 1.6rem;
+  font-weight: 900;
+  background: var(--cream-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.kiosk-pin-pad button:disabled {
+  opacity: 0.45;
+}
+
+.kiosk-pin-pad span {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.kiosk-exit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.kiosk-exit-actions .button {
+  min-height: 56px;
+}
+
+@media (max-width: 600px) {
+  .kiosk-tiles {
+    grid-template-columns: 1fr;
+  }
+
+  .kiosk-tile {
+    min-height: 112px;
+  }
+
+  .kiosk-form-actions .button,
+  .kiosk-exit-actions .button,
+  .kiosk-done {
+    width: 100%;
+  }
+
+  .kiosk-exit-actions {
+    flex-direction: column;
+  }
+}
