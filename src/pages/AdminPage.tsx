@@ -1,6 +1,5 @@
 import {
   ArrowLeft,
-  Ban,
   CalendarDays,
   ChevronRight,
   ClipboardCheck,
@@ -12,7 +11,6 @@ import {
   Package,
   Pencil,
   Plus,
-  RotateCcw,
   Settings,
   Trash2,
   X
@@ -23,13 +21,20 @@ import { EventsView } from "../components/admin/EventsView";
 import { LiveEventControls, LiveOrdersQueue } from "../components/admin/LiveOrdersQueue";
 import { OrderingSettingsCard } from "../components/admin/OrderingSettingsCard";
 import {
-  isPosPaymentMethod,
   posPaymentLabel,
   posPaymentLabels,
   posPaymentMethods,
   posPaymentUrl
 } from "../components/admin/paymentLabels";
+import { PosSalesList } from "../components/admin/PosSalesList";
 import { PreordersQueue } from "../components/admin/PreordersQueue";
+import {
+  BalanceSheetCard,
+  IncomeStatementCard,
+  LedgerCard,
+  SalesTaxCard,
+  useLedgerEntries
+} from "../components/admin/ReportCards";
 import { WaitlistCard } from "../components/admin/WaitlistCard";
 import { SiteContentView } from "../components/admin/SiteContentView";
 import { ChangePasswordForm } from "../components/ChangePasswordForm";
@@ -46,7 +51,6 @@ import {
   deleteAllTestTickets,
   deleteExpense,
   deleteMenuItem,
-  deletePosTicket,
   reportingDefaults,
   saveBusinessSettings,
   saveMenuItem,
@@ -55,8 +59,6 @@ import {
   saveReportingSettings,
   saveTestMode,
   seedMenuItemsIfEmpty,
-  setPosTicketStatus,
-  updatePosTicket,
   watchAppState,
   watchExpenses,
   watchInventory,
@@ -79,6 +81,7 @@ import {
   type ReportingSettings
 } from "../lib/firestoreClient";
 import { useMenuProducts } from "../lib/menuStore";
+import { useAllOrders } from "../lib/ordersStore";
 import { formatMoney } from "../lib/money";
 import {
   buildBalanceSheet,
@@ -87,7 +90,11 @@ import {
   expenseCategoryLabels,
   expensesInPeriod,
   getPeriods,
+  inPeriodByKey,
+  ledgerAdjustments,
+  ledgerEntriesInPeriod,
   periodRangeLabel,
+  reportSales,
   ticketsInPeriod,
   type Period,
   type PeriodId
@@ -264,7 +271,7 @@ export function AdminPage({ path }: AdminPageProps) {
       {title === "Settings" && (
         <SettingsView payments={payments} products={products} testMode={testMode} />
       )}
-      {title === "Reports" && <ReportsView pos={pos} />}
+      {title === "Reports" && <ReportsView pos={pos} testMode={testMode} />}
     </main>
   );
 }
@@ -863,7 +870,15 @@ function OrdersView({ pos, products }: { pos: PosState; products: MenuProduct[] 
   const lastSale = paid[0];
 
   if (group === "pos") {
-    return <PosOrdersDetail pos={pos} products={products} onBack={() => setGroup("overview")} />;
+    return (
+      <PosSalesList
+        tickets={pos.tickets}
+        loading={pos.loading}
+        failed={Boolean(pos.error)}
+        products={products}
+        onBack={() => setGroup("overview")}
+      />
+    );
   }
 
   return (
@@ -908,344 +923,6 @@ function OrdersView({ pos, products }: { pos: PosState; products: MenuProduct[] 
         </span>
       </button>
     </section>
-  );
-}
-
-function PosOrdersDetail({
-  pos,
-  products,
-  onBack
-}: {
-  pos: PosState;
-  products: MenuProduct[];
-  onBack: () => void;
-}) {
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState("");
-  const tickets = pos.tickets;
-  const paid = tickets.filter((ticket) => ticket.status === "paid");
-  const voidedCount = tickets.length - paid.length;
-  const revenueAllTime = paid.reduce((sum, ticket) => sum + ticket.totalCents, 0);
-
-  async function run(action: () => Promise<void>) {
-    setActionError("");
-    try {
-      await action();
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "The change could not be saved.");
-    }
-  }
-
-  function handleDelete(ticket: PosTicketRecord) {
-    const confirmed = window.confirm(
-      `Permanently delete ${ticket.ticketNumber} (${formatMoney(ticket.totalCents)})? ` +
-        "This removes it from all reports and cannot be undone. Voiding keeps a record instead."
-    );
-    if (!confirmed) return;
-    if (editingId === ticket.id) setEditingId(null);
-    void run(() => deletePosTicket(ticket));
-  }
-
-  return (
-    <section className="admin-card">
-      <div className="toolbar">
-        <button className="button button-small" type="button" onClick={onBack}>
-          <ArrowLeft size={16} />
-          All orders
-        </button>
-      </div>
-      <h2>Mobile POS Sales</h2>
-      {pos.loading ? (
-        <p className="muted">Loading sales…</p>
-      ) : pos.error ? (
-        <p className="muted">Sales unavailable: {pos.error}</p>
-      ) : tickets.length === 0 ? (
-        <p className="muted">No POS sales yet. Ring one up in Live POS.</p>
-      ) : (
-        <>
-          <div className="admin-row">
-            <span>
-              {paid.length} sales{voidedCount > 0 ? ` · ${voidedCount} voided` : ""}
-            </span>
-            <strong>{formatMoney(revenueAllTime)}</strong>
-          </div>
-          {actionError && (
-            <p className="form-notice form-notice-error" role="alert">
-              {actionError}
-            </p>
-          )}
-          {tickets.map((ticket) =>
-            editingId === ticket.id ? (
-              <TicketEditor
-                key={ticket.id}
-                ticket={ticket}
-                products={products}
-                onClose={() => setEditingId(null)}
-              />
-            ) : (
-              <article
-                className={`receipt-card${ticket.status === "void" ? " receipt-void" : ""}`}
-                key={ticket.id}
-              >
-                <div className="receipt-head">
-                  <div>
-                    <strong>
-                      {ticket.customerName ? `${ticket.customerName} · ` : ""}
-                      {ticket.ticketNumber}
-                    </strong>
-                    <span className="muted">{formatBusinessDateTime(ticket.createdAtUtc)}</span>
-                  </div>
-                  <span className="price-chip">
-                    <span>{posPaymentLabel(ticket.paymentMethod)}</span>
-                  </span>
-                  {ticket.status === "void" && (
-                    <span className="status-badge product-status-inactive">Void</span>
-                  )}
-                </div>
-                <div className="receipt-lines">
-                  {ticket.items.map((item) => (
-                    <div className="receipt-line" key={`${ticket.id}-${item.productId}`}>
-                      <span>
-                        {item.quantity} × {item.productName}
-                      </span>
-                      <span className="muted">@ {formatMoney(item.unitPriceCents)}</span>
-                      <strong>{formatMoney(item.quantity * item.unitPriceCents)}</strong>
-                    </div>
-                  ))}
-                </div>
-                <div className="receipt-totals">
-                  <div>
-                    <span>Subtotal</span>
-                    <strong>{formatMoney(ticket.subtotalCents)}</strong>
-                  </div>
-                  <div>
-                    <span>Tax</span>
-                    <strong>{formatMoney(ticket.taxCents)}</strong>
-                  </div>
-                  <div className="receipt-grand">
-                    <span>Total</span>
-                    <strong>{formatMoney(ticket.totalCents)}</strong>
-                  </div>
-                </div>
-                <div className="button-row">
-                  {ticket.status === "paid" ? (
-                    <>
-                      <button
-                        className="button button-small"
-                        type="button"
-                        onClick={() => setEditingId(ticket.id)}
-                      >
-                        <Pencil size={16} />
-                        Edit
-                      </button>
-                      <button
-                        className="button button-small"
-                        type="button"
-                        onClick={() => void run(() => setPosTicketStatus(ticket, "void"))}
-                      >
-                        <Ban size={16} />
-                        Void
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      className="button button-small"
-                      type="button"
-                      onClick={() => void run(() => setPosTicketStatus(ticket, "paid"))}
-                    >
-                      <RotateCcw size={16} />
-                      Restore
-                    </button>
-                  )}
-                  <button
-                    className="button button-small"
-                    type="button"
-                    onClick={() => handleDelete(ticket)}
-                  >
-                    <Trash2 size={16} />
-                    Delete
-                  </button>
-                </div>
-              </article>
-            )
-          )}
-        </>
-      )}
-    </section>
-  );
-}
-
-function TicketEditor({
-  ticket,
-  products,
-  onClose
-}: {
-  ticket: PosTicketRecord;
-  products: MenuProduct[];
-  onClose: () => void;
-}) {
-  const business = useBusinessSettings();
-  const [items, setItems] = useState<PosTicketItem[]>(() =>
-    ticket.items.map((item) => ({ ...item }))
-  );
-  const [method, setMethod] = useState<string>(ticket.paymentMethod);
-  const [customerName, setCustomerName] = useState(ticket.customerName);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const subtotalCents = items.reduce((sum, item) => sum + item.quantity * item.unitPriceCents, 0);
-  const taxCents = Math.round((subtotalCents * business.taxRateBps) / 10000);
-  const totalCents = subtotalCents + taxCents;
-  const addable = products.filter(
-    (product) =>
-      product.status === "active" &&
-      product.singlePriceCents > 0 &&
-      !items.some((item) => item.productId === product.id)
-  );
-
-  function updateQuantity(productId: string, quantity: number) {
-    setItems((current) =>
-      quantity <= 0
-        ? current.filter((item) => item.productId !== productId)
-        : current.map((item) => (item.productId === productId ? { ...item, quantity } : item))
-    );
-  }
-
-  function addItem(productId: string) {
-    const product = products.find((item) => item.id === productId);
-    if (!product) return;
-    setItems((current) => [
-      ...current,
-      {
-        productId: product.id,
-        productName: product.name,
-        quantity: 1,
-        unitPriceCents: product.singlePriceCents
-      }
-    ]);
-  }
-
-  async function handleSave() {
-    if (items.length === 0) {
-      setError("A ticket needs at least one item — use Void or Delete to remove the whole sale.");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      await updatePosTicket(ticket, {
-        items,
-        subtotalCents,
-        taxCents,
-        totalCents,
-        paymentMethod: method,
-        customerName: customerName.trim()
-      });
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save the changes.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <article className="receipt-card">
-      <div className="receipt-head">
-        <div>
-          <strong>Editing {ticket.ticketNumber}</strong>
-          <span className="muted">{formatBusinessDateTime(ticket.createdAtUtc)}</span>
-        </div>
-      </div>
-      <div className="receipt-lines">
-        {items.map((item) => (
-          <div className="ticket-edit-line" key={item.productId}>
-            <div>
-              <strong>{item.productName}</strong>
-              <span className="muted"> @ {formatMoney(item.unitPriceCents)}</span>
-            </div>
-            <div className="pos-qty">
-              <button type="button" onClick={() => updateQuantity(item.productId, item.quantity - 1)}>
-                -
-              </button>
-              <output>{item.quantity}</output>
-              <button type="button" onClick={() => updateQuantity(item.productId, item.quantity + 1)}>
-                +
-              </button>
-            </div>
-            <strong>{formatMoney(item.quantity * item.unitPriceCents)}</strong>
-          </div>
-        ))}
-      </div>
-      {addable.length > 0 && (
-        <label className="ticket-edit-add">
-          Add item
-          <select
-            value=""
-            onChange={(event) => {
-              if (event.target.value) addItem(event.target.value);
-            }}
-          >
-            <option value="">Choose an item…</option>
-            {addable.map((product) => (
-              <option key={product.id} value={product.id}>
-                {product.name} ({formatMoney(product.singlePriceCents)})
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-      <label className="ticket-edit-add">
-        Payment method
-        <select
-          value={method}
-          onChange={(event) => setMethod(event.target.value)}
-        >
-          {!isPosPaymentMethod(method) && <option value={method}>{posPaymentLabel(method)}</option>}
-          {posPaymentMethods.map((key) => (
-            <option key={key} value={key}>
-              {posPaymentLabels[key]}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="ticket-edit-add">
-        Name for the order
-        <input
-          type="text"
-          value={customerName}
-          autoComplete="off"
-          placeholder="e.g. Maria"
-          onChange={(event) => setCustomerName(event.target.value)}
-        />
-      </label>
-      <div className="receipt-totals">
-        <div>
-          <span>Subtotal</span>
-          <strong>{formatMoney(subtotalCents)}</strong>
-        </div>
-        <div>
-          <span>Tax (recalculated at {business.taxRateBps / 100}%)</span>
-          <strong>{formatMoney(taxCents)}</strong>
-        </div>
-        <div className="receipt-grand">
-          <span>Total</span>
-          <strong>{formatMoney(totalCents)}</strong>
-        </div>
-      </div>
-      {error && (
-        <p className="form-notice form-notice-error" role="alert">
-          {error}
-        </p>
-      )}
-      <div className="button-row">
-        <button className="button button-primary" type="button" onClick={handleSave} disabled={busy}>
-          {busy ? "Saving…" : "Save Changes"}
-        </button>
-        <button className="button button-ghost" type="button" onClick={onClose}>
-          Cancel
-        </button>
-      </div>
-    </article>
   );
 }
 
@@ -2211,40 +1888,22 @@ function useExpenses() {
 
 const dollars = (cents: number) => (cents / 100).toFixed(2);
 
-function ReportLine({
-  label,
-  cents,
-  indent = false,
-  total = false,
-  negative = false
-}: {
-  label: string;
-  cents: number;
-  indent?: boolean;
-  total?: boolean;
-  negative?: boolean;
-}) {
-  return (
-    <div className={`report-line${indent ? " indent" : ""}${total ? " total" : ""}`}>
-      <span>{label}</span>
-      <strong>{negative ? `(${formatMoney(cents)})` : formatMoney(cents)}</strong>
-    </div>
-  );
-}
-
-type ReportTab = "income" | "balance" | "tax" | "expenses";
+type ReportTab = "income" | "balance" | "tax" | "ledger" | "expenses";
 
 const reportTabs: { id: ReportTab; label: string }[] = [
   { id: "income", label: "Income Statement" },
   { id: "balance", label: "Balance Sheet" },
-  { id: "tax", label: "Sales & Use Tax" },
+  { id: "tax", label: "Sales Tax" },
+  { id: "ledger", label: "Refunds and Voids" },
   { id: "expenses", label: "Expenses" }
 ];
 
-function ReportsView({ pos }: { pos: PosState }) {
+function ReportsView({ pos, testMode }: { pos: PosState; testMode: boolean }) {
   const business = useBusinessSettings();
   const reporting = useReportingSettings();
   const { expenses, error: expensesError } = useExpenses();
+  const ledger = useLedgerEntries();
+  const { orders } = useAllOrders();
   const [tab, setTab] = useState<ReportTab>("income");
   const [periodId, setPeriodId] = useState<PeriodId>("this_month");
 
@@ -2253,7 +1912,15 @@ function ReportsView({ pos }: { pos: PosState }) {
   const paid = pos.tickets.filter((ticket) => ticket.status === "paid");
   const periodTickets = ticketsInPeriod(paid, period);
   const periodExpenses = expensesInPeriod(expenses, period);
-  const usesPeriod = tab === "income" || tab === "tax" || tab === "expenses";
+  const usesPeriod = tab !== "balance";
+
+  // Test mode shows practice sales only. Ledger entries and orders are real, so they stay out.
+  const realTickets = testMode ? [] : pos.tickets;
+  const entries = testMode ? [] : ledger.entries;
+  const sales = reportSales(realTickets, entries);
+  const adjustments = ledgerAdjustments(entries, realTickets);
+  const periodSales = inPeriodByKey(sales, period);
+  const periodAdjustments = inPeriodByKey(adjustments, period);
 
   function exportRawSalesCsv() {
     const header = ["Ticket", "Name", "Date", "Payment", "Items", "Net Sale", "Tax", "Total"];
@@ -2319,262 +1986,29 @@ function ReportsView({ pos }: { pos: PosState }) {
         <IncomeStatementCard
           businessName={business.name}
           period={period}
-          tickets={periodTickets}
-          expenses={periodExpenses}
+          statement={buildIncomeStatement(periodSales, periodAdjustments, periodExpenses, reporting)}
           reporting={reporting}
         />
       )}
       {tab === "balance" && (
-        <BalanceSheetCard businessName={business.name} tickets={paid} reporting={reporting} />
+        <BalanceSheetCard
+          businessName={business.name}
+          sheet={buildBalanceSheet(sales, adjustments, testMode ? [] : orders, reporting)}
+        />
       )}
       {tab === "tax" && (
         <SalesTaxCard
           businessName={business.name}
           period={period}
-          tickets={periodTickets}
-          taxRateBps={business.taxRateBps}
+          report={buildSalesTaxReport(periodSales, periodAdjustments, business.taxRateBps)}
           reporting={reporting}
         />
       )}
+      {tab === "ledger" && (
+        <LedgerCard period={period} entries={ledgerEntriesInPeriod(entries, period)} failed={ledger.failed} />
+      )}
       {tab === "expenses" && <ExpensesCard period={period} expenses={periodExpenses} />}
     </section>
-  );
-}
-
-function IncomeStatementCard({
-  businessName,
-  period,
-  tickets,
-  expenses,
-  reporting
-}: {
-  businessName: string;
-  period: Period;
-  tickets: PosTicketRecord[];
-  expenses: ExpenseRecord[];
-  reporting: ReportingSettings;
-}) {
-  const statement = buildIncomeStatement(tickets, expenses, reporting);
-  const sharePercent = reporting.revenueShareBps / 100;
-
-  function exportCsv() {
-    const rows: string[][] = [
-      [businessName, ""],
-      ["Income Statement", periodRangeLabel(period)],
-      ["", ""],
-      ["Gross receipts", dollars(statement.grossReceiptsCents)],
-      ["Less: sales tax collected", `(${dollars(statement.salesTaxCents)})`],
-      ["Net sales", dollars(statement.netSalesCents)],
-      ["", ""],
-      [`Admin revenue share (${sharePercent}% of net sales)`, dollars(statement.adminShareCents)],
-      ...statement.expenseLines.map((line) => [line.label, dollars(line.amountCents)]),
-      ["Total expenses", dollars(statement.totalExpensesCents)],
-      ["", ""],
-      ["Owner net income", dollars(statement.ownerNetIncomeCents)]
-    ];
-    downloadCsv(`bbt-income-statement-${period.id}-${businessTodayKey()}.csv`, rows);
-  }
-
-  return (
-    <article className="admin-card report-card">
-      <header className="report-heading">
-        <p className="eyebrow">{businessName}</p>
-        <h2>Income Statement</h2>
-        <p className="muted">{periodRangeLabel(period)}</p>
-      </header>
-      <div className="report-lines">
-        <ReportLine label="Gross receipts" cents={statement.grossReceiptsCents} />
-        <ReportLine
-          label="Less: sales tax collected"
-          cents={statement.salesTaxCents}
-          indent
-          negative
-        />
-        <ReportLine label="Net sales" cents={statement.netSalesCents} total />
-      </div>
-      <h3 className="report-subhead">Expenses</h3>
-      <div className="report-lines">
-        <ReportLine
-          label={`Admin revenue share (${sharePercent}% of net sales)`}
-          cents={statement.adminShareCents}
-          indent
-        />
-        {statement.expenseLines.map((line) => (
-          <ReportLine key={line.category} label={line.label} cents={line.amountCents} indent />
-        ))}
-        <ReportLine label="Total expenses" cents={statement.totalExpensesCents} total />
-        <ReportLine label="Owner net income" cents={statement.ownerNetIncomeCents} total />
-      </div>
-      <div className="order-group-stats report-split">
-        <div>
-          <span>Owner net income</span>
-          <strong>{formatMoney(statement.ownerNetIncomeCents)}</strong>
-        </div>
-        <div>
-          <span>Admin share ({sharePercent}%)</span>
-          <strong>{formatMoney(statement.adminShareCents)}</strong>
-        </div>
-        <div>
-          <span>Sales tax set aside</span>
-          <strong>{formatMoney(statement.salesTaxCents)}</strong>
-        </div>
-        <div>
-          <span>Operating expenses</span>
-          <strong>{formatMoney(statement.operatingExpensesCents)}</strong>
-        </div>
-      </div>
-      <button className="button button-primary" type="button" onClick={exportCsv}>
-        <Download size={18} />
-        Export Income Statement
-      </button>
-    </article>
-  );
-}
-
-function BalanceSheetCard({
-  businessName,
-  tickets,
-  reporting
-}: {
-  businessName: string;
-  tickets: PosTicketRecord[];
-  reporting: ReportingSettings;
-}) {
-  const sheet = buildBalanceSheet(tickets, reporting);
-
-  function exportCsv() {
-    const rows: string[][] = [
-      [businessName, ""],
-      ["Balance Sheet", `As of ${sheet.asOfKey}`],
-      ["", ""],
-      ["Assets", ""],
-      ["Cash on hand", dollars(sheet.cashOnHandCents)],
-      ["Equipment", dollars(sheet.equipmentAssetsCents)],
-      ["Other assets", dollars(sheet.otherAssetsCents)],
-      ["Total assets", dollars(sheet.totalAssetsCents)],
-      ["", ""],
-      ["Liabilities", ""],
-      ["Sales tax payable", dollars(sheet.salesTaxPayableCents)],
-      ["Admin revenue share payable", dollars(sheet.adminSharePayableCents)],
-      ["Other liabilities", dollars(sheet.otherLiabilitiesCents)],
-      ["Total liabilities", dollars(sheet.totalLiabilitiesCents)],
-      ["", ""],
-      ["Owner's equity", dollars(sheet.ownerEquityCents)]
-    ];
-    downloadCsv(`bbt-balance-sheet-${sheet.asOfKey}.csv`, rows);
-  }
-
-  return (
-    <article className="admin-card report-card">
-      <header className="report-heading">
-        <p className="eyebrow">{businessName}</p>
-        <h2>Balance Sheet</h2>
-        <p className="muted">As of {sheet.asOfKey}</p>
-      </header>
-      <h3 className="report-subhead">Assets</h3>
-      <div className="report-lines">
-        <ReportLine label="Cash on hand" cents={sheet.cashOnHandCents} indent />
-        <ReportLine label="Equipment" cents={sheet.equipmentAssetsCents} indent />
-        <ReportLine label="Other assets" cents={sheet.otherAssetsCents} indent />
-        <ReportLine label="Total assets" cents={sheet.totalAssetsCents} total />
-      </div>
-      <h3 className="report-subhead">Liabilities</h3>
-      <div className="report-lines">
-        <ReportLine label="Sales tax payable" cents={sheet.salesTaxPayableCents} indent />
-        <ReportLine label="Admin revenue share payable" cents={sheet.adminSharePayableCents} indent />
-        <ReportLine label="Other liabilities" cents={sheet.otherLiabilitiesCents} indent />
-        <ReportLine label="Total liabilities" cents={sheet.totalLiabilitiesCents} total />
-      </div>
-      <h3 className="report-subhead">Equity</h3>
-      <div className="report-lines">
-        <ReportLine label="Owner's equity (assets − liabilities)" cents={sheet.ownerEquityCents} total />
-      </div>
-      <p className="muted">
-        Cash, equipment, and other asset/liability values come from Report Settings. Sales tax
-        payable and admin share payable are calculated from all-time sales minus what you've
-        recorded as remitted/paid.
-      </p>
-      <button className="button button-primary" type="button" onClick={exportCsv}>
-        <Download size={18} />
-        Export Balance Sheet
-      </button>
-    </article>
-  );
-}
-
-function SalesTaxCard({
-  businessName,
-  period,
-  tickets,
-  taxRateBps,
-  reporting
-}: {
-  businessName: string;
-  period: Period;
-  tickets: PosTicketRecord[];
-  taxRateBps: number;
-  reporting: ReportingSettings;
-}) {
-  const report = buildSalesTaxReport(tickets, taxRateBps);
-
-  function exportCsv() {
-    const rows: string[][] = [
-      [businessName, ""],
-      ["Sales & Use Tax Report", periodRangeLabel(period)],
-      ["Jurisdiction", reporting.taxJurisdiction || "—"],
-      ["Tax account #", reporting.taxAccountNumber || "—"],
-      ["Filing frequency", reporting.filingFrequency],
-      ["", ""],
-      ["Gross sales (excluding tax)", dollars(report.grossSalesCents)],
-      ["Exempt sales", dollars(report.exemptSalesCents)],
-      ["Taxable sales", dollars(report.taxableSalesCents)],
-      ["Tax rate", `${report.taxRateBps / 100}%`],
-      ["Tax calculated at rate", dollars(report.taxCalculatedCents)],
-      ["Tax actually collected", dollars(report.taxCollectedCents)],
-      ["Rounding difference", dollars(report.roundingDifferenceCents)]
-    ];
-    downloadCsv(`bbt-sales-tax-${period.id}-${businessTodayKey()}.csv`, rows);
-  }
-
-  return (
-    <article className="admin-card report-card">
-      <header className="report-heading">
-        <p className="eyebrow">{businessName}</p>
-        <h2>Sales &amp; Use Tax Report</h2>
-        <p className="muted">{periodRangeLabel(period)}</p>
-      </header>
-      <div className="report-lines">
-        <div className="report-line">
-          <span>Jurisdiction</span>
-          <strong>{reporting.taxJurisdiction || "Set in Report Settings"}</strong>
-        </div>
-        <div className="report-line">
-          <span>Tax account #</span>
-          <strong>{reporting.taxAccountNumber || "Set in Report Settings"}</strong>
-        </div>
-        <div className="report-line">
-          <span>Filing frequency</span>
-          <strong>{reporting.filingFrequency}</strong>
-        </div>
-      </div>
-      <h3 className="report-subhead">Return figures</h3>
-      <div className="report-lines">
-        <ReportLine label="Gross sales (excluding tax)" cents={report.grossSalesCents} indent />
-        <ReportLine label="Exempt sales" cents={report.exemptSalesCents} indent />
-        <ReportLine label="Taxable sales" cents={report.taxableSalesCents} total />
-        <div className="report-line indent">
-          <span>Tax rate</span>
-          <strong>{report.taxRateBps / 100}%</strong>
-        </div>
-        <ReportLine label="Tax calculated at rate" cents={report.taxCalculatedCents} indent />
-        <ReportLine label="Tax actually collected" cents={report.taxCollectedCents} total />
-        <ReportLine label="Rounding difference" cents={report.roundingDifferenceCents} indent />
-      </div>
-      <button className="button button-primary" type="button" onClick={exportCsv}>
-        <Download size={18} />
-        Export Tax Report
-      </button>
-    </article>
   );
 }
 

@@ -135,7 +135,13 @@ export function mapOrderDoc(id: string, data: Record<string, unknown>): OrderRec
     updatedAtUtc: text(data.updatedAtUtc),
     approvedAtUtc: text(data.approvedAtUtc),
     payByUtc: text(data.payByUtc),
-    stockHeld: data.stockHeld === true
+    stockHeld: data.stockHeld === true,
+    paypalOrderId: text(data.paypalOrderId),
+    paypalCaptureId: text(data.paypalCaptureId),
+    paypalFeeCents: count(data.paypalFeeCents),
+    paidAtUtc: text(data.paidAtUtc),
+    refundedCents: count(data.refundedCents),
+    saleId: text(data.saleId)
   };
 }
 
@@ -173,6 +179,14 @@ export function watchQueueOrders(
     onData,
     onError
   );
+}
+
+/** All V1 orders, for the reports. */
+export function watchAllOrders(
+  onData: (orders: OrderRecord[]) => void,
+  onError: (error: Error) => void
+): () => void {
+  return watchQuery(() => query(collection(db(), ORDERS), where("kind", "in", kinds)), onData, onError);
 }
 
 /** The orders of 1 event, for the prep sheet and the pickup list. */
@@ -216,6 +230,10 @@ export function useLiveOrders(): OrdersState {
 
 export function useQueueOrders(): OrdersState {
   return useWatchedOrders(watchQueueOrders, "queue");
+}
+
+export function useAllOrders(): OrdersState {
+  return useWatchedOrders(watchAllOrders, "all");
 }
 
 export function useEventOrders(eventId: string): OrdersState {

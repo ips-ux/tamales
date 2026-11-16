@@ -477,6 +477,53 @@
   min-height: 44px;
 }
 
+/* Orders: payment facts, the pay-first hint, the Refund dialog */
+.live-order-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.order-card-hint,
+.order-dialog-lead {
+  margin: 0;
+}
+
+.order-dialog .toggle-row {
+  min-height: 44px;
+}
+
+/* Reports: the list of refunds and voids */
+.ledger-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ledger-row {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0.75rem 0;
+  overflow-wrap: anywhere;
+  border-top: 1px solid var(--line);
+}
+
+.ledger-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ledger-row-amount {
+  margin-left: auto;
+}
+
 /* Print: only the copy that print.ts adds to the page is printed. */
 .print-root {
   display: none;

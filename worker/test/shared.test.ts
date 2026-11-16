@@ -11,8 +11,15 @@ import {
   paymentDescription,
   runningOrderNumber
 } from "../../shared/orderNumber";
-import { applyAction, canRunAction, holdsEventStock, isFinalState } from "../../shared/orderState";
-import { buildOrderLines, computeTotals, tamaleCount, tamalesByItem, type PricedMenuItem } from "../../shared/pricing";
+import { applyAction, canRunAction, handOverNeedsPayment, holdsEventStock, isFinalState } from "../../shared/orderState";
+import {
+  buildOrderLines,
+  computeTotals,
+  onlineFeeCents,
+  tamaleCount,
+  tamalesByItem,
+  type PricedMenuItem
+} from "../../shared/pricing";
 import { quantityLabel } from "../../shared/quantity";
 
 const menu: PricedMenuItem[] = [
@@ -117,6 +124,56 @@ describe("pricing", () => {
     expect(plain).toMatchObject({ deliveryFeeCents: 1000, taxCents: 870, totalCents: 11870 });
     const taxed = computeTotals({ lines, deliveryFeeCents: 1000, taxRateBps: 870, deliveryFeeTaxable: true });
     expect(taxed).toMatchObject({ taxCents: 957, totalCents: 11957 });
+  });
+});
+
+describe("online ordering fee", () => {
+  const fee = { paypalFeeBps: 349, paypalFeeFixedCents: 49, feeSharePct: 50 };
+
+  it("is the customer share of the PayPal fee, rounded to the cent", () => {
+    // 3.49% of 5652 = 197.25. Plus 49 = 246.25. 50% = 123.13.
+    expect(onlineFeeCents(5652, fee)).toBe(123);
+    expect(onlineFeeCents(5652, { ...fee, feeSharePct: 100 })).toBe(246);
+    expect(onlineFeeCents(5652, { ...fee, feeSharePct: 0 })).toBe(0);
+    // 3.49% of 100 = 3.49. Plus 49 = 52.49. 50% = 26.245.
+    expect(onlineFeeCents(100, fee)).toBe(26);
+    // 50% of 49 with no rate = 24.5, and Math.round gives 25.
+    expect(onlineFeeCents(1000, { paypalFeeBps: 0, paypalFeeFixedCents: 49, feeSharePct: 50 })).toBe(25);
+  });
+
+  it("is 0 when the pre-fee total is 0", () => {
+    expect(onlineFeeCents(0, fee)).toBe(0);
+    expect(onlineFeeCents(-5, fee)).toBe(0);
+  });
+
+  it("goes on the total only with PayPal Checkout, and is not taxed", () => {
+    const input = { lines: [{ lineTotalCents: 3400 }, { lineTotalCents: 1800 }], deliveryFeeCents: 0, taxRateBps: 870, deliveryFeeTaxable: false };
+    expect(computeTotals({ ...input, usesPayPal: true, feeSettings: fee })).toEqual({
+      subtotalCents: 5200,
+      deliveryFeeCents: 0,
+      onlineFeeCents: 123,
+      taxCents: 452,
+      totalCents: 5775
+    });
+    expect(computeTotals({ ...input, usesPayPal: false, feeSettings: fee })).toMatchObject({
+      onlineFeeCents: 0,
+      taxCents: 452,
+      totalCents: 5652
+    });
+    expect(computeTotals(input).onlineFeeCents).toBe(0);
+  });
+
+  it("uses the delivery fee and the tax in the pre-fee total", () => {
+    const totals = computeTotals({
+      lines: [{ lineTotalCents: 10000 }],
+      deliveryFeeCents: 1000,
+      taxRateBps: 870,
+      deliveryFeeTaxable: true,
+      usesPayPal: true,
+      feeSettings: fee
+    });
+    // Pre-fee total 11957: round(50% of (417.30 + 49)) = 233.
+    expect(totals).toEqual({ subtotalCents: 10000, deliveryFeeCents: 1000, onlineFeeCents: 233, taxCents: 957, totalCents: 12190 });
   });
 });
 
@@ -254,7 +311,16 @@ describe("event rules", () => {
 
 describe("order state table", () => {
   const now = "2026-11-13T18:00:00.000Z";
-  const settings = { paymentWindowHours: 72, deliveryFeeTaxable: false, taxRateBps: 870 };
+  // A fee share of 0 keeps the online ordering fee out of these tests. "online ordering fee" tests it.
+  const settings = {
+    paymentWindowHours: 72,
+    deliveryFeeTaxable: false,
+    taxRateBps: 870,
+    paypalFeeBps: 349,
+    paypalFeeFixedCents: 49,
+    feeSharePct: 0
+  };
+  const baseTotals = { subtotalCents: 10000, deliveryFeeCents: 0, onlineFeeCents: 0, taxCents: 870, totalCents: 10870 };
   const states: OrderState[] = [
     "requested",
     "approved",
@@ -297,15 +363,33 @@ describe("order state table", () => {
       for (const state of states) {
         const expected = allowed[action].includes(state);
         expect(canRunAction(order(state), action), `${action} from ${state}`).toBe(expected);
+        // A handover needs a paid order. The next test checks the unpaid order.
+        const subject = action === "hand_over" ? order(state, "paid") : order(state);
         if (expected) {
-          expect(() => applyAction(order(state), { action }, now, settings)).not.toThrow();
+          expect(() => applyAction(subject, { action }, now, settings)).not.toThrow();
         } else {
-          expect(() => applyAction(order(state), { action }, now, settings)).toThrow(OrderError);
+          expect(() => applyAction(subject, { action }, now, settings)).toThrow(OrderError);
         }
       }
     }
     expect(final.every(isFinalState)).toBe(true);
     expect(isFinalState("ready")).toBe(false);
+  });
+
+  it("refuses the handover of an order that is not paid", () => {
+    for (const paymentState of ["unpaid", "check_payment", "refunded"] as PaymentState[]) {
+      expect(() => applyAction(order("ready", paymentState), { action: "hand_over" }, now, settings)).toThrow(
+        "Mark the order as paid first."
+      );
+      expect(handOverNeedsPayment({ paymentState })).toBe(true);
+    }
+    expect(handOverNeedsPayment({ paymentState: "paid" })).toBe(false);
+    expect(applyAction(order("ready", "paid"), { action: "hand_over" }, now, settings).state).toBe("handed_over");
+  });
+
+  it("refuses mark unpaid after a PayPal capture", () => {
+    expect(canRunAction({ ...order("received", "paid"), paypalCaptureId: "CAP1" }, "mark_unpaid")).toBe(false);
+    expect(canRunAction({ ...order("received", "paid"), paypalCaptureId: "" }, "mark_unpaid")).toBe(true);
   });
 
   it("lets a live order go to handed over from received and preparing", () => {
@@ -327,7 +411,8 @@ describe("order state table", () => {
     expect(canRunAction(order("handed_over", "paid"), "mark_unpaid")).toBe(false);
     expect(applyAction(order("ready", "paid"), { action: "mark_unpaid" }, now, settings)).toEqual({
       updatedAtUtc: now,
-      paymentState: "unpaid"
+      paymentState: "unpaid",
+      paidAtUtc: ""
     });
   });
 
@@ -341,6 +426,8 @@ describe("order state table", () => {
     expect(changes).toEqual({
       updatedAtUtc: now,
       state: "approved",
+      paymentMethod: "paypal",
+      totals: baseTotals,
       approvedAtUtc: now,
       payByUtc: "2026-11-15T18:00:00.000Z",
       scheduledAtUtc: "2026-11-20T23:00:00.000Z"
@@ -367,7 +454,7 @@ describe("order state table", () => {
     // No fee in the action keeps the computed fee.
     const kept = applyAction(base, { action: "approve" }, now, settings);
     expect(kept.delivery).toBeUndefined();
-    expect(kept.totals).toBeUndefined();
+    expect(kept.totals).toEqual(baseTotals);
   });
 
   it("does not approve a delivery with no fee", () => {
@@ -385,11 +472,33 @@ describe("order state table", () => {
     expect(applyAction(order("approved"), { action: "mark_paid" }, now, settings)).toEqual({
       updatedAtUtc: now,
       paymentState: "paid",
+      paidAtUtc: now,
       state: "received"
     });
     expect(applyAction(order("ready", "check_payment"), { action: "mark_paid" }, now, settings)).toEqual({
       updatedAtUtc: now,
-      paymentState: "paid"
+      paymentState: "paid",
+      paidAtUtc: now
+    });
+  });
+
+  it("adds the online ordering fee to the final total at approval", () => {
+    const withFee = { ...settings, feeSharePct: 50 };
+    const delivery = { address: "1 Main St", distanceMiles: 4, feeStatus: "computed" as const };
+    // Pre-fee total: 10000 + 1500 + 870 = 12370. Fee: round(50% of (12370 x 3.49% + 49)) = round(240.36) = 240.
+    const changes = applyAction({ ...order("requested"), delivery }, { action: "approve", deliveryFeeCents: 1500 }, now, withFee);
+    expect(changes.paymentMethod).toBe("paypal");
+    expect(changes.totals).toEqual({
+      subtotalCents: 10000,
+      deliveryFeeCents: 1500,
+      onlineFeeCents: 240,
+      taxCents: 870,
+      totalCents: 12610
+    });
+    // Pre-fee total 10870: round(50% of (379.36 + 49)) = 214.
+    expect(applyAction(order("requested"), { action: "approve" }, now, withFee).totals).toMatchObject({
+      onlineFeeCents: 214,
+      totalCents: 11084
     });
   });
 

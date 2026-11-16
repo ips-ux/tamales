@@ -2,7 +2,16 @@ import { FormEvent, useState } from "react";
 import type { OrderRecord } from "../../../shared/model";
 import { useBusinessSettings } from "../../lib/businessSettings";
 import { utcToZonedInput, zonedInputToUtc } from "./businessDateTime";
-import { checkApproval, type ApproveResult } from "./orderRules";
+import type { RefundOrderInput } from "../../../shared/moneyModel";
+import {
+  canCancelWithRefund,
+  checkApproval,
+  checkRefund,
+  REFUND_REASON_MAX,
+  refundFormFor,
+  type ApproveResult,
+  type RefundForm
+} from "./orderRules";
 
 interface ReasonDialogProps {
   title: string;
@@ -154,6 +163,92 @@ export function ApproveDialog({ order, suggestedAtUtc, busy, error, onConfirm, o
           </button>
           <button className="button button-primary" type="submit" disabled={busy}>
             {busy ? "Approving..." : "Approve"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+interface RefundDialogProps {
+  order: OrderRecord;
+  /** The short number in the title, for example "BBT-1042" or "#12". */
+  title: string;
+  busy: boolean;
+  error: string;
+  onConfirm: (input: RefundOrderInput) => void;
+  onClose: () => void;
+}
+
+/** Refund: the owner records money that he already sent back to the customer. */
+export function RefundDialog({ order, title, busy, error, onConfirm, onClose }: RefundDialogProps) {
+  const [form, setForm] = useState<RefundForm>(() => refundFormFor(order));
+  const [errors, setErrors] = useState<string[]>([]);
+  const offersCancel = canCancelWithRefund(order);
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const result = checkRefund(order, form);
+    setErrors(result.errors);
+    if (result.input) onConfirm(result.input);
+  }
+
+  const messages = errors.length > 0 ? errors : error ? [error] : [];
+
+  return (
+    <div className="modal-overlay">
+      <form
+        className="admin-card modal-card order-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Refund ${title}`}
+        onSubmit={submit}
+      >
+        <h2>Refund {title}</h2>
+        <p className="order-dialog-lead">Send the money in PayPal, Venmo or Cash App first. Then record it here.</p>
+        {messages.length > 0 && (
+          <div className="form-notice form-notice-error" role="alert">
+            {messages.map((message) => (
+              <div key={message}>{message}</div>
+            ))}
+          </div>
+        )}
+        <label>
+          Amount ($)
+          <input
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            value={form.amount}
+            onChange={(event) => setForm((current) => ({ ...current, amount: event.target.value }))}
+          />
+        </label>
+        <label>
+          Reason
+          <textarea
+            rows={3}
+            maxLength={REFUND_REASON_MAX}
+            value={form.reason}
+            onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))}
+          />
+          <span className="field-help">The customer sees this reason.</span>
+        </label>
+        {offersCancel && (
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={form.cancelOrder}
+              onChange={(event) => setForm((current) => ({ ...current, cancelOrder: event.target.checked }))}
+            />
+            <span>Cancel this order</span>
+          </label>
+        )}
+        <div className="button-row">
+          <button className="button button-ghost" type="button" onClick={onClose} disabled={busy}>
+            Go Back
+          </button>
+          <button className="button button-primary" type="submit" disabled={busy}>
+            {busy ? "Saving..." : "Record Refund"}
           </button>
         </div>
       </form>

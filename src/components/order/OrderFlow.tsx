@@ -16,6 +16,7 @@ import { useSiteContent } from "../../lib/siteContent";
 import { formatWindow } from "../../lib/time";
 import { formatPhone } from "../publicForm";
 import { OrderSummary } from "../OrderSummary";
+import { configuredPayPalClientId } from "../tracker/paypalSdk";
 import { ProductCard } from "../ProductCard";
 import {
   HoneypotField,
@@ -51,9 +52,11 @@ import {
   paymentChoices,
   policyKeys,
   quoteMatches,
+  reviewPaymentNote,
   stepLabel,
   stockLeft,
   submitLabel,
+  usesPayPalCheckout,
   usesStock,
   validateDetails,
   validateMenu,
@@ -89,7 +92,7 @@ const CART_CHANGED_MESSAGE = "We changed your order to match the tamales that ar
 
 const paymentLabels: Record<PaymentMethod, string> = {
   unset: "",
-  paypal: "PayPal",
+  paypal: "PayPal or card",
   venmo: "Venmo",
   cashapp: "Cash App",
   cash: "Cash at the booth"
@@ -163,12 +166,23 @@ export function OrderFlow({ kind, source, event, kioskToken = "", onDone, onCanc
 
   const lines = useMemo(() => cartToLines(cart, entries), [cart, entries]);
   const deliveryFee = deliveryFeeCents(kind, flowDetails, quote);
+  const usesPayPal = usesPayPalCheckout(kind, paymentMethod);
   const estimate = useMemo(
-    () => estimateOrder(lines, menu, { deliveryFeeCents: deliveryFee, taxRateBps, deliveryFeeTaxable: ordering.deliveryFeeTaxable }),
-    [lines, menu, deliveryFee, taxRateBps, ordering.deliveryFeeTaxable]
+    () =>
+      estimateOrder(lines, menu, {
+        deliveryFeeCents: deliveryFee,
+        taxRateBps,
+        deliveryFeeTaxable: ordering.deliveryFeeTaxable,
+        usesPayPal,
+        feeSettings: ordering
+      }),
+    [lines, menu, deliveryFee, taxRateBps, ordering, usesPayPal]
   );
-  const payChoices = paymentChoices(handles);
+  // The kiosk has no PayPal buttons. A customer who wants PayPal orders on a phone.
+  const payChoices = paymentChoices(handles, source !== "kiosk" && Boolean(configuredPayPalClientId()));
+  const hasPaymentLink = payChoices.some((choice) => choice.method === "venmo" || choice.method === "cashapp");
   const approval = needsApproval(kind, event);
+  const paymentNote = reviewPaymentNote(kind, event, ordering);
 
   function updateContact(field: keyof ContactFields, value: string) {
     setContact((current) => ({ ...current, [field]: value }));
@@ -587,13 +601,24 @@ export function OrderFlow({ kind, source, event, kioskToken = "", onDone, onCanc
                 />
                 <span>
                   <strong>{choice.label}</strong>
+                  {choice.method === "paypal" && paymentMethod === "paypal" && (
+                    <small>This adds an online ordering fee of {formatMoney(estimate.totals.onlineFeeCents)}.</small>
+                  )}
                   {choice.method === "venmo" && <small>@{handles.venmoHandle.replace(/^@/, "")}</small>}
                   {choice.method === "cashapp" && <small>${handles.cashAppCashtag.replace(/^\$/, "")}</small>}
                   {choice.method === "cash" && <small>Pay when you pick up your order.</small>}
                 </span>
               </label>
             ))}
-            {payChoices.length > 1 && <p className="muted">We show the payment link after you place the order.</p>}
+            {paymentMethod === "paypal" && (
+              <p className="payment-fee-line">
+                <span>Online ordering fee</span>
+                <strong>{formatMoney(estimate.totals.onlineFeeCents)}</strong>
+              </p>
+            )}
+            {hasPaymentLink && paymentMethod !== "paypal" && (
+              <p className="muted">We show the payment link after you place the order.</p>
+            )}
           </fieldset>
         )}
 
@@ -658,6 +683,7 @@ export function OrderFlow({ kind, source, event, kioskToken = "", onDone, onCanc
                 </dd>
               </div>
             </dl>
+            {paymentNote && <p className="review-payment-note">{paymentNote}</p>}
             {policyKeys(kind, event).map((key) => (
               <p className="muted review-policy" key={key}>
                 {content[key]}

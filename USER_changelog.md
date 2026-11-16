@@ -15,6 +15,18 @@ If a note needs nothing from you, it says so.
 - A PayPal Business account.
 - Your sign-ins for Cloudflare, Resend and Firebase during setup. You type them in yourself.
 
+## 2026-11-15 - Online payment and your books
+
+- Customers will pay for pre-orders and batch requests online with PayPal, a card, or Venmo. You make tamales for paid orders only.
+- For an event with a fixed number of tamales, we hold the customer's tamales for 15 minutes while they pay. If they do not pay, the tamales go back on sale.
+- After you approve a request, the customer has 72 hours to pay. Then the order cancels itself.
+- The customer pays half of the PayPal fee as an "Online ordering fee". You can change the fee numbers in Settings, under Ordering.
+- You record refunds in Admin. Send the money first in PayPal, Venmo or Cash App, then record it.
+- You can no longer delete a real sale. Void it and give a reason. An edit also needs a reason.
+- Reports now show customer deposits, payment fees, and each refund and void.
+- This is not on the live site yet. First we connect your PayPal account.
+- From you: a PayPal Business account.
+
 ## 2026-11-15 - Fix for forms and orders
 
 - A fault stopped the server from saving messages, sign-ups and orders. It is fixed.

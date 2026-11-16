@@ -52,6 +52,21 @@ export function fakeFirestore(seed: Record<string, Record<string, unknown>> = {}
       return Response.json({ transaction: `tx-${state.transactions}` });
     }
     if (rest === ":rollback") return Response.json({});
+    if (rest === ":runQuery") {
+      const query = body.structuredQuery;
+      const collection = query.from[0].collectionId as string;
+      const filter = query.where.fieldFilter;
+      const wanted = JSON.stringify(filter.value);
+      const rows = [...docs.entries()]
+        .filter(([key]) => key.startsWith(`${collection}/`) && key.split("/").length === 2)
+        .filter(([, data]) => {
+          const fields = encodeFields(data);
+          return filter.op === "EQUAL" && JSON.stringify(fields[filter.field.fieldPath]) === wanted;
+        })
+        .slice(0, query.limit ?? 1000)
+        .map(([key, data]) => ({ document: { name: `${ROOT}/${key}`, fields: encodeFields(data) }, readTime: "t" }));
+      return Response.json(rows.length ? rows : [{ readTime: "t" }]);
+    }
     if (rest === ":commit") {
       if (state.abortCommits > 0) {
         state.abortCommits -= 1;

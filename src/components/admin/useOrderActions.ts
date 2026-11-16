@@ -1,12 +1,13 @@
 import { useState } from "react";
 import type { OrderAction, OrderActionInput, OrderRecord } from "../../../shared/model";
-import { ApiError, runOrderAction } from "../../lib/api";
+import type { RefundOrderInput } from "../../../shared/moneyModel";
+import { ApiError, refundOrder, runOrderAction } from "../../lib/api";
 
 const FALLBACK_ERROR = "We could not save the change. Check your connection, then try again.";
 
 export interface RunningAction {
   orderId: string;
-  action: OrderAction;
+  action: OrderAction | "refund";
 }
 
 /**
@@ -39,8 +40,28 @@ export function useOrderActions() {
     }
   }
 
+  /** Records a refund that the owner already sent. */
+  async function refund(input: RefundOrderInput): Promise<boolean> {
+    if (running) return false;
+    setRunning({ orderId: input.orderId, action: "refund" });
+    setFailure(null);
+    try {
+      await refundOrder(input);
+      return true;
+    } catch (error) {
+      setFailure({
+        orderId: input.orderId,
+        message: error instanceof ApiError ? error.message : FALLBACK_ERROR
+      });
+      return false;
+    } finally {
+      setRunning(null);
+    }
+  }
+
   return {
     run,
+    refund,
     running,
     /** True while an action runs on this order. */
     isBusy: (orderId: string) => running?.orderId === orderId,

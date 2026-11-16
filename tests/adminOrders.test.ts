@@ -55,6 +55,12 @@ function makeOrder(overrides: Partial<OrderRecord> = {}): OrderRecord {
     approvedAtUtc: "",
     payByUtc: "",
     stockHeld: false,
+    paypalOrderId: "",
+    paypalCaptureId: "",
+    paypalFeeCents: 0,
+    paidAtUtc: "",
+    refundedCents: 0,
+    saleId: "",
     ...overrides
   };
 }

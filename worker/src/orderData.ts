@@ -79,7 +79,11 @@ export function readOrdering(data: Data | null): OrderingSettings {
     minNoticeDays: Math.max(0, Math.floor(num(source.minNoticeDays, orderingDefaults.minNoticeDays))),
     deliveryRings: rings,
     deliveryFeeTaxable: source.deliveryFeeTaxable === true,
-    paymentWindowHours: Math.max(1, num(source.paymentWindowHours, orderingDefaults.paymentWindowHours))
+    paymentWindowHours: Math.max(1, num(source.paymentWindowHours, orderingDefaults.paymentWindowHours)),
+    holdMinutes: Math.max(1, Math.floor(num(source.holdMinutes, orderingDefaults.holdMinutes))),
+    paypalFeeBps: Math.max(0, num(source.paypalFeeBps, orderingDefaults.paypalFeeBps)),
+    paypalFeeFixedCents: Math.max(0, Math.round(num(source.paypalFeeFixedCents, orderingDefaults.paypalFeeFixedCents))),
+    feeSharePct: Math.min(100, Math.max(0, num(source.feeSharePct, orderingDefaults.feeSharePct)))
   };
 }
 
@@ -144,7 +148,19 @@ const STATES = [
 export function readOrder(id: string, data: Data): OrderRecord | null {
   if (!KINDS.includes(str(data.kind)) || !STATES.includes(str(data.state))) return null;
   if (!Array.isArray(data.items) || !data.totals || !data.customer || !str(data.trackerToken)) return null;
-  return { ...(data as unknown as OrderRecord), id, stockHeld: data.stockHeld === true };
+  // An order from build piece 2 has no money fields. Each one gets its empty value.
+  return {
+    ...(data as unknown as OrderRecord),
+    id,
+    stockHeld: data.stockHeld === true,
+    payByUtc: str(data.payByUtc),
+    paypalOrderId: str(data.paypalOrderId),
+    paypalCaptureId: str(data.paypalCaptureId),
+    paypalFeeCents: Math.max(0, Math.round(num(data.paypalFeeCents, 0))),
+    paidAtUtc: str(data.paidAtUtc),
+    refundedCents: Math.max(0, Math.round(num(data.refundedCents, 0))),
+    saleId: str(data.saleId)
+  };
 }
 
 /** 192 random bits as hex. The token is the key to the order tracker. */
@@ -159,6 +175,8 @@ export function newTrackerToken(): string {
  */
 export function toTracker(order: OrderRecord): TrackerRecord {
   return {
+    payByUtc: order.payByUtc,
+    refundedCents: order.refundedCents,
     orderNumber: order.orderNumber,
     kind: order.kind,
     state: order.state,

@@ -3,7 +3,7 @@
 
 import { OrderError } from "./errors";
 import type { OrderAction, OrderActionInput, OrderRecord, OrderState, OrderingSettings } from "./model";
-import { computeTotals } from "./pricing";
+import { computeTotals, type FeeSettings } from "./pricing";
 
 /** An order in a final state does not change again. */
 export const FINAL_STATES: OrderState[] = ["handed_over", "declined", "canceled", "expired"];
@@ -12,7 +12,19 @@ export function isFinalState(state: OrderState): boolean {
   return FINAL_STATES.includes(state);
 }
 
-type StateFields = Pick<OrderRecord, "kind" | "state" | "paymentState">;
+type StateFields = Pick<OrderRecord, "kind" | "state" | "paymentState"> &
+  Partial<Pick<OrderRecord, "paypalCaptureId">>;
+
+/** The text of the refusal when the owner hands over an order that is not paid. */
+export const PAY_FIRST_MESSAGE = "Mark the order as paid first.";
+
+/**
+ * True if the handover must wait for the payment. `canRunAction` permits "hand_over"
+ * by the state only; `applyAction` then refuses an order that is not paid.
+ */
+export function handOverNeedsPayment(order: Pick<OrderRecord, "paymentState">): boolean {
+  return order.paymentState !== "paid";
+}
 
 /** True if the state table permits the action for this order now. */
 export function canRunAction(order: StateFields, action: OrderAction): boolean {
@@ -25,6 +37,8 @@ export function canRunAction(order: StateFields, action: OrderAction): boolean {
     case "mark_paid":
       return !final && (paymentState === "unpaid" || paymentState === "check_payment");
     case "mark_unpaid":
+      // A PayPal capture is a fact. Only a refund entry can follow it.
+      if (order.paypalCaptureId) return false;
       return !final && (paymentState === "paid" || paymentState === "check_payment");
     case "prepare":
       return state === "received";
@@ -51,16 +65,19 @@ export function holdsEventStock(order: Pick<OrderRecord, "stockHeld" | "eventId"
   return order.stockHeld === true && Boolean(order.eventId);
 }
 
-export type ActionSettings = Pick<OrderingSettings, "paymentWindowHours" | "deliveryFeeTaxable"> & {
-  /** Tax rate from `settings/business`, in basis points. */
-  taxRateBps: number;
-};
+export type ActionSettings = Pick<OrderingSettings, "paymentWindowHours" | "deliveryFeeTaxable"> &
+  FeeSettings & {
+    /** Tax rate from `settings/business`, in basis points. */
+    taxRateBps: number;
+  };
 
 export type OrderChanges = Partial<
   Pick<
     OrderRecord,
     | "state"
     | "paymentState"
+    | "paymentMethod"
+    | "paidAtUtc"
     | "approvedAtUtc"
     | "payByUtc"
     | "scheduledAtUtc"
@@ -106,20 +123,18 @@ export function applyAction(
       if (order.delivery && feeGiven) {
         const feeCents = input.deliveryFeeCents as number;
         const same = order.delivery.feeStatus === "computed" && feeCents === order.totals.deliveryFeeCents;
-        if (!same) {
-          changes.delivery = { ...order.delivery, feeStatus: "owner_set" };
-          changes.totals = {
-            ...computeTotals({
-              lines: order.items,
-              deliveryFeeCents: feeCents,
-              taxRateBps: settings.taxRateBps,
-              deliveryFeeTaxable: settings.deliveryFeeTaxable
-            }),
-            onlineFeeCents: order.totals.onlineFeeCents
-          };
-          changes.totals.totalCents += order.totals.onlineFeeCents;
-        }
+        if (!same) changes.delivery = { ...order.delivery, feeStatus: "owner_set" };
       }
+      // An approved order is paid with PayPal Checkout, so the final total has the online ordering fee.
+      changes.paymentMethod = "paypal";
+      changes.totals = computeTotals({
+        lines: order.items,
+        deliveryFeeCents: order.delivery && feeGiven ? (input.deliveryFeeCents as number) : order.totals.deliveryFeeCents,
+        taxRateBps: settings.taxRateBps,
+        deliveryFeeTaxable: settings.deliveryFeeTaxable,
+        usesPayPal: true,
+        feeSettings: settings
+      });
       const hours = settings.paymentWindowHours > 0 ? settings.paymentWindowHours : 72;
       changes.state = "approved";
       changes.approvedAtUtc = nowIso;
@@ -137,11 +152,13 @@ export function applyAction(
       break;
     case "mark_paid":
       changes.paymentState = "paid";
+      changes.paidAtUtc = nowIso;
       // A paid approved order is accepted.
       if (order.state === "approved") changes.state = "received";
       break;
     case "mark_unpaid":
       changes.paymentState = "unpaid";
+      changes.paidAtUtc = "";
       break;
     case "prepare":
       changes.state = "preparing";
@@ -150,6 +167,7 @@ export function applyAction(
       changes.state = "ready";
       break;
     case "hand_over":
+      if (handOverNeedsPayment(order)) throw new OrderError(PAY_FIRST_MESSAGE);
       changes.state = "handed_over";
       break;
   }

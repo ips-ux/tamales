@@ -1,6 +1,6 @@
 # Bangin Bustos Tamales API. The only door for public writes. It sends all email.
 # Secrets are not in this file. Set them with `npx wrangler secret put <NAME>`:
-#   FIREBASE_SERVICE_ACCOUNT, RESEND_API_KEY, TURNSTILE_SECRET_KEY
+#   FIREBASE_SERVICE_ACCOUNT, RESEND_API_KEY, TURNSTILE_SECRET_KEY, PAYPAL_CLIENT_SECRET
 name = "bbt-api"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
@@ -9,9 +9,17 @@ workers_dev = true
 [observability]
 enabled = true
 
+# Each 5 minutes: expire the approved orders that were not paid in time. See src/expiry.ts.
+[triggers]
+crons = ["*/5 * * * *"]
+
 [vars]
 FIREBASE_PROJECT_ID = "bustostamale"
 PUBLIC_SITE_ORIGIN = "https://bustostamales.com"
 ALLOWED_ORIGINS = "https://bustostamales.com,https://www.bustostamales.com,https://bustostamale.web.app,http://127.0.0.1:5173,http://localhost:5173"
 EMAIL_FROM = "Bangin Bustos Tamales <orders@bustostamales.com>"
 OWNER_EMAIL = "banginbustostamales@gmail.com"
+# PayPal Checkout. PAYPAL_ENV is "sandbox" or "live". The client id is public. It is the same
+# value as the VITE_PAYPAL_CLIENT_ID GitHub secret. With an empty id, the payment routes answer 503.
+PAYPAL_ENV = "sandbox"
+PAYPAL_CLIENT_ID = ""

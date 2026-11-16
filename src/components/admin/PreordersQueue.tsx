@@ -5,17 +5,21 @@ import { useEvents } from "../../lib/eventsStore";
 import { useQueueOrders } from "../../lib/ordersStore";
 import { formatBusinessDateTime } from "../../lib/time";
 import { contactPhoneHref } from "./contactLinks";
-import { ApproveDialog, ReasonDialog } from "./OrderDialogs";
+import { ApproveDialog, ReasonDialog, RefundDialog } from "./OrderDialogs";
 import {
+  actionBlocked,
   actionBusyLabels,
   actionLabels,
   availableActions,
+  canRefund,
   customerName,
   formatDayKey,
+  handOverHint,
   kindLabels,
   lineLabel,
   moneyLines,
-  paymentStateLabels,
+  paymentFacts,
+  paymentSummary,
   queueCounts,
   queueOrders,
   queueTabs,
@@ -33,7 +37,7 @@ const emptyText: Record<QueueTab, string> = {
   done: "No orders are done."
 };
 
-type Dialog = { order: OrderRecord; action: "approve" | "decline" | "cancel" } | null;
+type Dialog = { order: OrderRecord; action: "approve" | "decline" | "cancel" | "refund" } | null;
 
 /** Admin > Pre-Orders: pre-orders and batch requests, by step. */
 export function PreordersQueue() {
@@ -112,6 +116,8 @@ export function PreordersQueue() {
         const error = dialog ? "" : actions.errorFor(order.id);
         const phoneHref = contactPhoneHref(order.customer.phone);
         const orderActions = availableActions(order);
+        const refundable = canRefund(order);
+        const hint = handOverHint(order);
         const noteValue = notes[order.id] ?? order.ownerNote;
         return (
           <article className="receipt-card" key={order.id}>
@@ -146,8 +152,14 @@ export function PreordersQueue() {
               </div>
               <div>
                 <dt>Payment</dt>
-                <dd>{paymentStateLabels[order.paymentState]}</dd>
+                <dd>{paymentSummary(order)}</dd>
               </div>
+              {paymentFacts(order, formatBusinessDateTime).map((fact) => (
+                <div key={fact.label}>
+                  <dt>{fact.label}</dt>
+                  <dd>{fact.value}</dd>
+                </div>
+              ))}
               {order.kind === "batch" && (
                 <div>
                   <dt>{order.fulfillment === "delivery" ? "Delivery" : "Pickup"}</dt>
@@ -172,12 +184,6 @@ export function PreordersQueue() {
                 <div>
                   <dt>Final date and time</dt>
                   <dd>{formatBusinessDateTime(order.scheduledAtUtc)}</dd>
-                </div>
-              )}
-              {order.state === "approved" && order.payByUtc && (
-                <div>
-                  <dt>Pay by</dt>
-                  <dd>{formatBusinessDateTime(order.payByUtc)}</dd>
                 </div>
               )}
               {order.customerNote && (
@@ -244,20 +250,39 @@ export function PreordersQueue() {
               </p>
             )}
 
-            {orderActions.length > 0 && (
+            {(orderActions.length > 0 || refundable) && (
               <div className="button-row order-card-actions">
                 {orderActions.map((action) => (
                   <button
                     key={action}
                     className="button button-small"
                     type="button"
-                    disabled={busy || actions.running !== null}
+                    disabled={busy || actions.running !== null || actionBlocked(order, action)}
+                    aria-describedby={action === "hand_over" && hint ? `pay-first-${order.id}` : undefined}
                     onClick={() => start(order, action)}
                   >
                     {busy && actions.running?.action === action ? actionBusyLabels[action] : actionLabels[action]}
                   </button>
                 ))}
+                {refundable && (
+                  <button
+                    className="button button-small"
+                    type="button"
+                    disabled={busy || actions.running !== null}
+                    onClick={() => {
+                      actions.clearError();
+                      setDialog({ order, action: "refund" });
+                    }}
+                  >
+                    Refund
+                  </button>
+                )}
               </div>
+            )}
+            {hint && (
+              <p className="field-help order-card-hint" id={`pay-first-${order.id}`}>
+                {hint}
+              </p>
             )}
           </article>
         );
@@ -278,7 +303,21 @@ export function PreordersQueue() {
           }
         />
       )}
-      {dialog && dialogOrder && dialog.action !== "approve" && (
+      {dialog && dialogOrder && dialog.action === "refund" && (
+        <RefundDialog
+          order={dialogOrder}
+          title={dialogOrder.orderNumber}
+          busy={actions.isBusy(dialogOrder.id)}
+          error={actions.errorFor(dialogOrder.id)}
+          onClose={() => setDialog(null)}
+          onConfirm={(input) =>
+            void actions.refund(input).then((done) => {
+              if (done) setDialog(null);
+            })
+          }
+        />
+      )}
+      {dialog && dialogOrder && (dialog.action === "decline" || dialog.action === "cancel") && (
         <ReasonDialog
           title={`${dialog.action === "decline" ? "Decline" : "Cancel"} ${dialogOrder.orderNumber}`}
           confirmLabel={dialog.action === "decline" ? "Decline" : "Cancel Order"}
@@ -287,7 +326,7 @@ export function PreordersQueue() {
           busy={actions.isBusy(dialogOrder.id)}
           error={actions.errorFor(dialogOrder.id)}
           onClose={() => setDialog(null)}
-          onConfirm={(reason) => void runAction(dialogOrder, dialog.action, { reason })}
+          onConfirm={(reason) => void runAction(dialogOrder, dialog.action as OrderAction, { reason })}
         />
       )}
     </section>

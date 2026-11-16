@@ -35,6 +35,8 @@ const TOKEN = "a".repeat(48);
 
 function tracker(overrides: Partial<TrackerRecord> = {}): TrackerRecord {
   return {
+    payByUtc: "",
+    refundedCents: 0,
     orderNumber: "#12 - Nov 14 - Jane Doe",
     kind: "live",
     state: "received",
@@ -111,7 +113,7 @@ describe("tracker steps and labels", () => {
   it("shows the pre-steps for a request", () => {
     expect(trackerHeadline(trackerView(tracker({ state: "requested" })))).toBe("Waiting for approval");
     const approved = trackerView(tracker({ state: "approved" }));
-    expect(approved).toMatchObject({ label: "Approved. Pay to confirm.", detail: "We will send you a payment link." });
+    expect(approved).toMatchObject({ label: "Approved. Pay to confirm.", detail: "" });
   });
 
   it("shows the label and the reason for a stopped order", () => {

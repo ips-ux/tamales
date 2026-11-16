@@ -50,6 +50,8 @@ export function mapTrackerDoc(data: Record<string, unknown> | undefined): Tracke
   const totals = (data.totals && typeof data.totals === "object" ? data.totals : {}) as Record<string, unknown>;
   const items = Array.isArray(data.items) ? data.items : [];
   return {
+    payByUtc: text(data.payByUtc),
+    refundedCents: Math.max(0, cents(data.refundedCents)),
     orderNumber: text(data.orderNumber),
     kind: oneOf(data.kind, KINDS, "live"),
     state: data.state as OrderState,
@@ -110,12 +112,8 @@ export function trackerView(
     case "requested":
       return { type: "message", tone: "wait", label: "Waiting for approval", detail: "" };
     case "approved":
-      return {
-        type: "message",
-        tone: "wait",
-        label: "Approved. Pay to confirm.",
-        detail: "We will send you a payment link."
-      };
+      // The payment block below the headline shows the time limit and the PayPal buttons.
+      return { type: "message", tone: "wait", label: "Approved. Pay to confirm.", detail: "" };
     case "declined":
       return { type: "message", tone: "stopped", label: "Declined", detail: reason };
     case "canceled":
@@ -242,16 +240,19 @@ export function paymentLink(
 export type PaymentHelp =
   | { type: "none" }
   | { type: "text"; text: string }
+  /** PayPal Checkout: the total, the time limit and the PayPal buttons. */
+  | { type: "paypal" }
   /** A payment link method: the copy button, and the link when the account name exists. */
   | { type: "link"; buttonLabel: string; url: string; description: string };
 
 /** The payment block of the tracker. */
 export function paymentHelp(
-  record: Pick<TrackerRecord, "state" | "paymentState" | "paymentMethod" | "paymentDescription" | "totals">,
+  record: Pick<TrackerRecord, "kind" | "state" | "paymentState" | "paymentMethod" | "paymentDescription" | "totals">,
   handles: PaymentHandles
 ): PaymentHelp {
   if (isFinalTrackerState(record.state)) return { type: "none" };
   if (record.paymentState === "paid") return { type: "text", text: "Payment received." };
+  if (canPayOnline(record)) return { type: "paypal" };
   if (record.paymentState !== "check_payment") return { type: "none" };
   if (record.paymentMethod === "cash") return { type: "text", text: "Pay at the booth." };
   if (record.paymentMethod === "venmo" || record.paymentMethod === "cashapp") {
@@ -263,6 +264,21 @@ export function paymentHelp(
     };
   }
   return { type: "none" };
+}
+
+type PayFields = Pick<TrackerRecord, "kind" | "state" | "paymentState" | "paymentMethod">;
+
+/**
+ * True when the order waits for a PayPal Checkout payment:
+ * an approved pre-order or batch request, or a live order with PayPal that is not final.
+ * A pre-order or batch request always uses PayPal Checkout, also when the method is not set.
+ */
+export function canPayOnline(record: PayFields): boolean {
+  if (record.paymentState !== "unpaid") return false;
+  if (record.kind === "live") {
+    return record.paymentMethod === "paypal" && !isFinalTrackerState(record.state);
+  }
+  return record.state === "approved" && (record.paymentMethod === "paypal" || record.paymentMethod === "unset");
 }
 
 /** An order in a final state does not change again. The phone forgets its tracker. */

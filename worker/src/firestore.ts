@@ -1,6 +1,6 @@
 // Small Firestore client on the REST API. The service account is not subject to the security rules.
 
-import { decodeFields, encodeFields, type FirestoreFields } from "./firestoreValues";
+import { decodeFields, encodeFields, encodeValue, type FirestoreFields } from "./firestoreValues";
 
 interface RestDocument {
   name: string;
@@ -110,6 +110,37 @@ export class Firestore {
       }
       pageToken = page.nextPageToken ?? "";
     } while (pageToken);
+    return docs;
+  }
+
+  /**
+   * Finds the documents of a collection where 1 top-level field equals `value`.
+   * Firestore has an automatic index for this query. Returns `limit` documents at most.
+   */
+  async runQuery(collection: string, field: string, value: unknown, limit = 100): Promise<StoredDoc[]> {
+    const response = await this.request(`${this.base}:runQuery`, {
+      method: "POST",
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: collection }],
+          where: { fieldFilter: { field: { fieldPath: field }, op: "EQUAL", value: encodeValue(value) } },
+          limit
+        }
+      })
+    });
+    if (!response.ok) {
+      throw new Error(`Firestore query ${collection} failed (${response.status}): ${await response.text()}`);
+    }
+    // The answer is a list. An entry with no `document` only reports the read time.
+    const rows = (await response.json()) as Array<{ document?: RestDocument }>;
+    const docs: StoredDoc[] = [];
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (!row?.document?.name) continue;
+      docs.push({
+        id: decodeURIComponent(row.document.name.split("/").pop() ?? ""),
+        data: decodeFields(row.document.fields)
+      });
+    }
     return docs;
   }
 

@@ -1,3 +1,5 @@
+import type { OrderRecord } from "../../shared/model";
+import type { LedgerEntry } from "../../shared/moneyModel";
 import type {
   ExpenseCategory,
   ExpenseRecord,
@@ -106,6 +108,15 @@ export function expensesInPeriod(expenses: ExpenseRecord[], period: Period): Exp
 // ---------------------------------------------------------------------------
 // Statements
 // ---------------------------------------------------------------------------
+// The rules are in docs/V1_FUNDAMENTALS.md section 12:
+// - `posTickets` is the 1 sales ledger. A POS sale and a handed-over order are both sales.
+// - A refund, a void and an edit are entries in `ledgerEntries`. A sale counts as it was
+//   first recorded, in the period of the sale. Each entry counts in its own period.
+// - A prepayment is a liability until handover. Collected tax is a liability. A fee is an expense.
+// - Test data stays out of each number.
+// All functions below are pure. `dayKeyOf` gives the business day (YYYY-MM-DD) of a UTC time.
+
+export type DayKeyOf = (iso: string) => string;
 
 export const expenseCategoryLabels: Record<ExpenseCategory, string> = {
   ingredients: "Ingredients / food cost",
@@ -117,38 +128,165 @@ export const expenseCategoryLabels: Record<ExpenseCategory, string> = {
   other: "Other expenses"
 };
 
-export interface IncomeStatement {
-  grossReceiptsCents: number;
-  salesTaxCents: number;
-  netSalesCents: number;
-  adminShareCents: number;
-  expenseLines: { category: ExpenseCategory; label: string; amountCents: number }[];
-  operatingExpensesCents: number;
-  totalExpensesCents: number;
-  ownerNetIncomeCents: number;
+/** The parts of a sale that the reports read. `PosTicketRecord` fits it. */
+export type SaleRecord = Pick<
+  PosTicketRecord,
+  | "id"
+  | "status"
+  | "isTest"
+  | "createdAtUtc"
+  | "subtotalCents"
+  | "taxCents"
+  | "orderId"
+  | "deliveryFeeCents"
+  | "onlineFeeCents"
+  | "paypalFeeCents"
+>;
+
+/** A sale as it was first recorded, before each edit. */
+export interface ReportSale {
+  id: string;
+  dateKey: string;
+  subtotalCents: number;
+  taxCents: number;
+  deliveryFeeCents: number;
+  onlineFeeCents: number;
+  paypalFeeCents: number;
 }
 
-function sumTax(tickets: PosTicketRecord[]) {
-  return tickets.reduce((sum, ticket) => sum + ticket.taxCents, 0);
+/** The effect of 1 ledger entry on sales. A refund and a void are negative. An edit has the sign of its change. */
+export interface LedgerAdjustment {
+  entryId: string;
+  dateKey: string;
+  /** The change to sales without tax. */
+  netCents: number;
+  /** The change to collected tax. */
+  taxCents: number;
 }
 
-function sumTotal(tickets: PosTicketRecord[]) {
-  return tickets.reduce((sum, ticket) => sum + ticket.totalCents, 0);
+function realEntries(entries: LedgerEntry[]): LedgerEntry[] {
+  return entries.filter((entry) => !entry.isTest);
 }
 
-export function adminShareOfNetSales(netSalesCents: number, reporting: ReportingSettings) {
+/**
+ * The sales for the reports: each real sale that is paid, and each voided sale that has a
+ * void entry. The amounts are the first recorded amounts: an edit entry holds each later change.
+ */
+export function reportSales(tickets: SaleRecord[], entries: LedgerEntry[], dayKeyOf: DayKeyOf = businessDateKey): ReportSale[] {
+  const real = realEntries(entries);
+  const voided = new Set(real.filter((entry) => entry.type === "void").map((entry) => entry.saleId));
+  const sales: ReportSale[] = [];
+  for (const ticket of tickets) {
+    if (ticket.isTest) continue;
+    if (ticket.status !== "paid" && !voided.has(ticket.id)) continue;
+    let subtotalCents = ticket.subtotalCents;
+    let taxCents = ticket.taxCents;
+    for (const entry of real) {
+      if (entry.type !== "edit" || entry.saleId !== ticket.id) continue;
+      subtotalCents -= entry.amountCents - entry.taxCents;
+      taxCents -= entry.taxCents;
+    }
+    sales.push({
+      id: ticket.id,
+      dateKey: dayKeyOf(ticket.createdAtUtc),
+      subtotalCents,
+      taxCents,
+      deliveryFeeCents: ticket.deliveryFeeCents,
+      onlineFeeCents: ticket.onlineFeeCents,
+      paypalFeeCents: ticket.paypalFeeCents
+    });
+  }
+  return sales;
+}
+
+/**
+ * The entries that change sales.
+ * - A void and an edit count on the day of the entry.
+ * - A refund counts only when its order is a sale (it was handed over). It counts on the day
+ *   of the refund, or on the day of the sale if the sale is later. A refund of an order that
+ *   was not handed over returns a deposit; it is not a change to sales.
+ */
+export function ledgerAdjustments(
+  entries: LedgerEntry[],
+  tickets: SaleRecord[],
+  dayKeyOf: DayKeyOf = businessDateKey
+): LedgerAdjustment[] {
+  const adjustments: LedgerAdjustment[] = [];
+  for (const entry of realEntries(entries)) {
+    let at = entry.createdAtUtc;
+    if (entry.type === "refund") {
+      const sale = tickets.find(
+        (ticket) =>
+          !ticket.isTest &&
+          ((entry.saleId !== "" && ticket.id === entry.saleId) ||
+            (entry.orderId !== "" && ticket.orderId === entry.orderId))
+      );
+      if (!sale) continue;
+      if (sale.createdAtUtc > at) at = sale.createdAtUtc;
+    }
+    const sign = entry.type === "edit" ? 1 : -1;
+    adjustments.push({
+      entryId: entry.id,
+      dateKey: dayKeyOf(at),
+      netCents: sign * (entry.amountCents - entry.taxCents),
+      taxCents: sign * entry.taxCents
+    });
+  }
+  return adjustments;
+}
+
+/** The items of a period. Each item has a `dateKey`. */
+export function inPeriodByKey<T extends { dateKey: string }>(items: T[], period: Period): T[] {
+  return items.filter((item) => inPeriod(item.dateKey, period));
+}
+
+/** The real ledger entries that were recorded in a period, newest first. For the "Refunds and voids" list. */
+export function ledgerEntriesInPeriod(
+  entries: LedgerEntry[],
+  period: Period,
+  dayKeyOf: DayKeyOf = businessDateKey
+): LedgerEntry[] {
+  return realEntries(entries)
+    .filter((entry) => inPeriod(dayKeyOf(entry.createdAtUtc), period))
+    .sort((a, b) => b.createdAtUtc.localeCompare(a.createdAtUtc));
+}
+
+const sum = <T,>(items: T[], pick: (item: T) => number) => items.reduce((total, item) => total + pick(item), 0);
+
+export function adminShareOfNetSales(netSalesCents: number, reporting: Pick<ReportingSettings, "revenueShareBps">) {
   return Math.round((netSalesCents * reporting.revenueShareBps) / 10000);
 }
 
+export interface IncomeStatement {
+  /** Subtotals of the sales of the period, POS sales and order sales together. No tax and no fees. */
+  grossSalesCents: number;
+  /** Refunds, voids and edits of the period, without their tax part. Negative when sales go down. */
+  adjustmentsCents: number;
+  netSalesCents: number;
+  deliveryFeesCents: number;
+  onlineFeesCents: number;
+  totalIncomeCents: number;
+  expenseLines: { category: ExpenseCategory; label: string; amountCents: number }[];
+  /** What PayPal kept on the sales of the period. */
+  paymentFeesCents: number;
+  adminShareCents: number;
+  totalExpensesCents: number;
+  netIncomeCents: number;
+}
+
+/** The income statement of a period. Pass the sales, the adjustments and the expenses of that period. */
 export function buildIncomeStatement(
-  tickets: PosTicketRecord[],
-  expenses: ExpenseRecord[],
-  reporting: ReportingSettings
+  sales: ReportSale[],
+  adjustments: LedgerAdjustment[],
+  expenses: Pick<ExpenseRecord, "category" | "amountCents">[],
+  reporting: Pick<ReportingSettings, "revenueShareBps">
 ): IncomeStatement {
-  const grossReceiptsCents = sumTotal(tickets);
-  const salesTaxCents = sumTax(tickets);
-  const netSalesCents = grossReceiptsCents - salesTaxCents;
-  const adminShareCents = adminShareOfNetSales(netSalesCents, reporting);
+  const grossSalesCents = sum(sales, (sale) => sale.subtotalCents);
+  const adjustmentsCents = sum(adjustments, (item) => item.netCents);
+  const netSalesCents = grossSalesCents + adjustmentsCents;
+  const deliveryFeesCents = sum(sales, (sale) => sale.deliveryFeeCents);
+  const onlineFeesCents = sum(sales, (sale) => sale.onlineFeeCents);
+  const totalIncomeCents = netSalesCents + deliveryFeesCents + onlineFeesCents;
 
   const byCategory = new Map<ExpenseCategory, number>();
   for (const expense of expenses) {
@@ -161,48 +299,64 @@ export function buildIncomeStatement(
       label: expenseCategoryLabels[category],
       amountCents: byCategory.get(category) ?? 0
     }));
-  const operatingExpensesCents = expenseLines.reduce((sum, line) => sum + line.amountCents, 0);
-  const totalExpensesCents = operatingExpensesCents + adminShareCents;
+  const paymentFeesCents = sum(sales, (sale) => sale.paypalFeeCents);
+  const adminShareCents = adminShareOfNetSales(netSalesCents, reporting);
+  const totalExpensesCents = sum(expenseLines, (line) => line.amountCents) + paymentFeesCents + adminShareCents;
 
   return {
-    grossReceiptsCents,
-    salesTaxCents,
+    grossSalesCents,
+    adjustmentsCents,
     netSalesCents,
-    adminShareCents,
+    deliveryFeesCents,
+    onlineFeesCents,
+    totalIncomeCents,
     expenseLines,
-    operatingExpensesCents,
+    paymentFeesCents,
+    adminShareCents,
     totalExpensesCents,
-    ownerNetIncomeCents: netSalesCents - totalExpensesCents
+    netIncomeCents: totalIncomeCents - totalExpensesCents
   };
 }
 
 export interface SalesTaxReport {
-  grossSalesCents: number;
-  exemptSalesCents: number;
-  taxableSalesCents: number;
+  netSalesCents: number;
   taxRateBps: number;
-  taxCalculatedCents: number;
+  /** Tax on the sales of the period, as first recorded. */
   taxCollectedCents: number;
-  roundingDifferenceCents: number;
+  /** The tax part of the refunds, voids and edits of the period. Negative when tax goes down. */
+  taxAdjustmentsCents: number;
+  taxDueCents: number;
 }
 
+/** The sales tax report of a period: tax collected, less the tax part of refunds, voids and edits. */
 export function buildSalesTaxReport(
-  tickets: PosTicketRecord[],
+  sales: ReportSale[],
+  adjustments: LedgerAdjustment[],
   taxRateBps: number
 ): SalesTaxReport {
-  const taxCollectedCents = sumTax(tickets);
-  const grossSalesCents = sumTotal(tickets) - taxCollectedCents;
-  const taxableSalesCents = grossSalesCents;
-  const taxCalculatedCents = Math.round((taxableSalesCents * taxRateBps) / 10000);
+  const taxCollectedCents = sum(sales, (sale) => sale.taxCents);
+  const taxAdjustmentsCents = sum(adjustments, (item) => item.taxCents);
   return {
-    grossSalesCents,
-    exemptSalesCents: 0,
-    taxableSalesCents,
+    netSalesCents: sum(sales, (sale) => sale.subtotalCents) + sum(adjustments, (item) => item.netCents),
     taxRateBps,
-    taxCalculatedCents,
     taxCollectedCents,
-    roundingDifferenceCents: taxCollectedCents - taxCalculatedCents
+    taxAdjustmentsCents,
+    taxDueCents: taxCollectedCents + taxAdjustmentsCents
   };
+}
+
+/**
+ * Customer deposits: the money of orders that are paid, not handed over and not stopped,
+ * less what the owner refunded. A deposit is a liability until handover.
+ */
+export function customerDepositsCents(
+  orders: Pick<OrderRecord, "state" | "paymentState" | "totals" | "refundedCents">[]
+): number {
+  return sum(orders, (order) => {
+    if (order.paymentState !== "paid") return 0;
+    if (order.state !== "received" && order.state !== "preparing" && order.state !== "ready") return 0;
+    return Math.max(0, order.totals.totalCents - Math.max(0, order.refundedCents));
+  });
 }
 
 export interface BalanceSheet {
@@ -212,6 +366,7 @@ export interface BalanceSheet {
   otherAssetsCents: number;
   totalAssetsCents: number;
   salesTaxPayableCents: number;
+  customerDepositsCents: number;
   adminSharePayableCents: number;
   otherLiabilitiesCents: number;
   totalLiabilitiesCents: number;
@@ -219,33 +374,49 @@ export interface BalanceSheet {
 }
 
 /**
- * A simplified small-business balance sheet: asset values come from the
- * reporting settings, while the two operating liabilities are derived from
- * all-time POS activity minus what has already been remitted/paid out.
+ * A simple balance sheet. Asset values come from the report settings. Sales tax payable and
+ * the revenue share payable come from all sales and all adjustments, less what is recorded as paid.
  */
 export function buildBalanceSheet(
-  allTimeTickets: PosTicketRecord[],
-  reporting: ReportingSettings
+  allSales: ReportSale[],
+  allAdjustments: LedgerAdjustment[],
+  orders: Pick<OrderRecord, "state" | "paymentState" | "totals" | "refundedCents">[],
+  reporting: ReportingSettings,
+  asOfKey: string = businessTodayKey()
 ): BalanceSheet {
-  const allTimeTax = sumTax(allTimeTickets);
-  const allTimeNetSales = sumTotal(allTimeTickets) - allTimeTax;
-  const salesTaxPayableCents = allTimeTax - reporting.taxRemittedToDateCents;
+  const tax = buildSalesTaxReport(allSales, allAdjustments, 0);
+  const salesTaxPayableCents = tax.taxDueCents - reporting.taxRemittedToDateCents;
   const adminSharePayableCents =
-    adminShareOfNetSales(allTimeNetSales, reporting) - reporting.adminSharePaidToDateCents;
+    adminShareOfNetSales(tax.netSalesCents, reporting) - reporting.adminSharePaidToDateCents;
+  const depositsCents = customerDepositsCents(orders);
   const totalAssetsCents =
     reporting.cashOnHandCents + reporting.equipmentAssetsCents + reporting.otherAssetsCents;
   const totalLiabilitiesCents =
-    salesTaxPayableCents + adminSharePayableCents + reporting.otherLiabilitiesCents;
+    salesTaxPayableCents + depositsCents + adminSharePayableCents + reporting.otherLiabilitiesCents;
   return {
-    asOfKey: businessTodayKey(),
+    asOfKey,
     cashOnHandCents: reporting.cashOnHandCents,
     equipmentAssetsCents: reporting.equipmentAssetsCents,
     otherAssetsCents: reporting.otherAssetsCents,
     totalAssetsCents,
     salesTaxPayableCents,
+    customerDepositsCents: depositsCents,
     adminSharePayableCents,
     otherLiabilitiesCents: reporting.otherLiabilitiesCents,
     totalLiabilitiesCents,
     ownerEquityCents: totalAssetsCents - totalLiabilitiesCents
   };
+}
+
+export const ledgerTypeLabels: Record<LedgerEntry["type"], string> = {
+  refund: "Refund",
+  void: "Void",
+  edit: "Edit"
+};
+
+/** The amount of an entry as text. A refund and a void show the amount. An edit shows the signed change. */
+export function ledgerAmountText(entry: Pick<LedgerEntry, "type" | "amountCents">, formatMoney: (cents: number) => string): string {
+  if (entry.type !== "edit") return formatMoney(entry.amountCents);
+  if (entry.amountCents === 0) return formatMoney(0);
+  return `${entry.amountCents > 0 ? "+" : "-"}${formatMoney(Math.abs(entry.amountCents))}`;
 }

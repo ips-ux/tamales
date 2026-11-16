@@ -19,7 +19,13 @@ import type {
   PaymentMethod
 } from "../../../shared/model";
 import { addDaysToDateKey } from "../../../shared/orderNumber";
-import { buildOrderLines, computeTotals, MAX_LINE_QUANTITY, SINGLE_VARIANT_ID } from "../../../shared/pricing";
+import {
+  buildOrderLines,
+  computeTotals,
+  MAX_LINE_QUANTITY,
+  SINGLE_VARIANT_ID,
+  type FeeSettings
+} from "../../../shared/pricing";
 import { quantityLabel } from "../../../shared/quantity";
 import { isEmail } from "../publicForm";
 
@@ -67,8 +73,30 @@ export function needsApproval(kind: OrderKind, event?: Pick<EventRecord, "preord
   return kind === "preorder" && event?.preorderMode !== "fixed";
 }
 
+/** A fixed-allotment pre-order goes to the order tracker to pay, so its button names the payment. */
 export function submitLabel(kind: OrderKind, event?: Pick<EventRecord, "preorderMode">): string {
-  return needsApproval(kind, event) ? "Send Request" : "Place Order";
+  if (needsApproval(kind, event)) return "Send Request";
+  return kind === "preorder" ? "Continue to Payment" : "Place Order";
+}
+
+/**
+ * True when the order uses PayPal Checkout, so it has the online ordering fee.
+ * A pre-order and a batch request always use it. A live order uses it when the customer selects it.
+ */
+export function usesPayPalCheckout(kind: OrderKind, paymentMethod: PaymentMethod): boolean {
+  return kind !== "live" || paymentMethod === "paypal";
+}
+
+/** The line on the Review step that says when the customer pays. Empty for a live order. */
+export function reviewPaymentNote(
+  kind: OrderKind,
+  event: Pick<EventRecord, "preorderMode"> | undefined,
+  ordering: Pick<OrderingSettings, "holdMinutes">
+): string {
+  if (kind === "live") return "";
+  if (needsApproval(kind, event)) return "You pay online after we approve your order.";
+  const minutes = ordering.holdMinutes > 0 ? ordering.holdMinutes : 15;
+  return `We hold your tamales for ${minutes} ${minutes === 1 ? "minute" : "minutes"} while you pay.`;
 }
 
 /** True when the cart must stay inside the fixed allotment of the event. */
@@ -285,7 +313,14 @@ export interface Estimate {
 export function estimateOrder(
   inputs: OrderLineInput[],
   menu: FlowMenuItem[],
-  options: { deliveryFeeCents: number; taxRateBps: number; deliveryFeeTaxable: boolean }
+  options: {
+    deliveryFeeCents: number;
+    taxRateBps: number;
+    deliveryFeeTaxable: boolean;
+    /** True adds the online ordering fee. `feeSettings` comes from `settings/ordering`. */
+    usesPayPal?: boolean;
+    feeSettings?: FeeSettings;
+  }
 ): Estimate {
   const lines: OrderLine[] = [];
   for (const input of inputs) {
@@ -425,14 +460,23 @@ export function validateOrderContact(fields: ContactFields): string[] {
   return errors;
 }
 
-export type LivePaymentMethod = "venmo" | "cashapp" | "cash";
+export type LivePaymentMethod = "paypal" | "venmo" | "cashapp" | "cash";
 
-/** The payment rows for a live order. A row with no account name is left out. */
-export function paymentChoices(handles: { venmoHandle: string; cashAppCashtag: string }): Array<{
+export const PAYPAL_CHOICE_LABEL = "PayPal or card";
+
+/**
+ * The payment rows for a live order. PayPal Checkout is the first row when the site has it.
+ * A payment link row with no account name is left out.
+ */
+export function paymentChoices(
+  handles: { venmoHandle: string; cashAppCashtag: string },
+  paypalAvailable = false
+): Array<{
   method: LivePaymentMethod;
   label: string;
 }> {
   const choices: Array<{ method: LivePaymentMethod; label: string }> = [];
+  if (paypalAvailable) choices.push({ method: "paypal", label: PAYPAL_CHOICE_LABEL });
   if (handles.venmoHandle.trim()) choices.push({ method: "venmo", label: "Venmo" });
   if (handles.cashAppCashtag.trim()) choices.push({ method: "cashapp", label: "Cash App" });
   choices.push({ method: "cash", label: "Cash at the booth" });

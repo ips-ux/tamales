@@ -8,6 +8,11 @@ export interface Env {
   PUBLIC_SITE_ORIGIN?: string;
   EMAIL_FROM?: string;
   OWNER_EMAIL?: string;
+  /** "sandbox" or "live". Default: "sandbox". */
+  PAYPAL_ENV?: string;
+  PAYPAL_CLIENT_ID?: string;
+  /** Secret. */
+  PAYPAL_CLIENT_SECRET?: string;
 }
 
 export const BUSINESS_NAME = "Bangin Bustos Tamales";

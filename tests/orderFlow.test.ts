@@ -118,7 +118,7 @@ describe("flow steps and labels", () => {
 
   it("names the final button by approval", () => {
     expect(submitLabel("live")).toBe("Place Order");
-    expect(submitLabel("preorder", { preorderMode: "fixed" })).toBe("Place Order");
+    expect(submitLabel("preorder", { preorderMode: "fixed" })).toBe("Continue to Payment");
     expect(submitLabel("preorder", { preorderMode: "open" })).toBe("Send Request");
     expect(submitLabel("batch")).toBe("Send Request");
     expect(needsApproval("preorder", { preorderMode: "open" })).toBe(true);

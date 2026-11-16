@@ -286,7 +286,11 @@ export function watchOrderingSettings(
         minNoticeDays: wholeNumber(data.minNoticeDays, orderingDefaults.minNoticeDays),
         deliveryRings: mapRings(data.deliveryRings),
         deliveryFeeTaxable: flag(data.deliveryFeeTaxable, orderingDefaults.deliveryFeeTaxable),
-        paymentWindowHours: wholeNumber(data.paymentWindowHours, orderingDefaults.paymentWindowHours)
+        paymentWindowHours: wholeNumber(data.paymentWindowHours, orderingDefaults.paymentWindowHours),
+        holdMinutes: wholeNumber(data.holdMinutes, orderingDefaults.holdMinutes),
+        paypalFeeBps: wholeNumber(data.paypalFeeBps, orderingDefaults.paypalFeeBps),
+        paypalFeeFixedCents: wholeNumber(data.paypalFeeFixedCents, orderingDefaults.paypalFeeFixedCents),
+        feeSharePct: Math.min(100, wholeNumber(data.feeSharePct, orderingDefaults.feeSharePct))
       });
     },
     (error) => onError(error)

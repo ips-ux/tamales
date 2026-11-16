@@ -10,7 +10,8 @@ import type {
   PaymentMethod,
   PaymentState
 } from "../../../shared/model";
-import { canRunAction } from "../../../shared/orderState";
+import type { RefundOrderInput } from "../../../shared/moneyModel";
+import { canRunAction, handOverNeedsPayment, isFinalState, PAY_FIRST_MESSAGE } from "../../../shared/orderState";
 import { quantityLabel } from "../../../shared/quantity";
 import { formatMoney } from "../../lib/money";
 
@@ -100,6 +101,114 @@ const actionOrder: OrderAction[] = [
 /** The state actions that the owner can run on this order now, in button order. "save_note" has its own button. */
 export function availableActions(order: OrderRecord): OrderAction[] {
   return actionOrder.filter((action) => canRunAction(order, action));
+}
+
+/** The hint below the buttons when "Hand Over" waits for the payment. Empty if it does not. */
+export function handOverHint(order: OrderRecord): string {
+  return canRunAction(order, "hand_over") && handOverNeedsPayment(order) ? PAY_FIRST_MESSAGE : "";
+}
+
+/** True when the button of this action shows but cannot run now. */
+export function actionBlocked(order: OrderRecord, action: OrderAction): boolean {
+  return action === "hand_over" && handOverNeedsPayment(order);
+}
+
+// ---------------------------------------------------------------------------
+// Payment facts and refunds
+// ---------------------------------------------------------------------------
+
+type PaymentFields = Pick<
+  OrderRecord,
+  "state" | "paymentState" | "paymentMethod" | "paidAtUtc" | "paypalFeeCents" | "refundedCents" | "payByUtc"
+>;
+
+/** "PayPal, Paid" or "Not paid". The method shows only after the customer or the owner set it. */
+export function paymentSummary(order: Pick<OrderRecord, "paymentState" | "paymentMethod">): string {
+  const state = paymentStateLabels[order.paymentState];
+  return order.paymentMethod === "unset" ? state : `${paymentMethodLabels[order.paymentMethod]}, ${state}`;
+}
+
+export interface PaymentFact {
+  label: string;
+  value: string;
+}
+
+/**
+ * The payment facts of an order: when it was paid, the PayPal fee, the refunded
+ * amount, and the pay-by time of an approved order. A fact with no value is left out.
+ * `formatDateTime` gives "Sat, Nov 14, 5:02 PM" in the business time zone.
+ */
+export function paymentFacts(order: PaymentFields, formatDateTime: (iso: string) => string): PaymentFact[] {
+  const facts: PaymentFact[] = [];
+  if (order.paidAtUtc && (order.paymentState === "paid" || order.paymentState === "refunded")) {
+    facts.push({ label: "Paid", value: formatDateTime(order.paidAtUtc) });
+  }
+  if (order.paypalFeeCents > 0) facts.push({ label: "PayPal fee", value: formatMoney(order.paypalFeeCents) });
+  if (order.refundedCents > 0) facts.push({ label: "Refunded", value: formatMoney(order.refundedCents) });
+  if (order.state === "approved" && order.payByUtc) {
+    facts.push({ label: "Pay by", value: formatDateTime(order.payByUtc) });
+  }
+  return facts;
+}
+
+type RefundFields = Pick<OrderRecord, "id" | "state" | "paymentState" | "totals" | "refundedCents">;
+
+/** The part of the total that the owner did not refund. */
+export function refundRemainingCents(order: Pick<OrderRecord, "totals" | "refundedCents">): number {
+  return Math.max(0, order.totals.totalCents - Math.max(0, order.refundedCents));
+}
+
+/** True when the owner can record a refund: the order is paid and money remains. */
+export function canRefund(order: Pick<OrderRecord, "paymentState" | "totals" | "refundedCents">): boolean {
+  return order.paymentState === "paid" && refundRemainingCents(order) > 0;
+}
+
+/** True when the Refund dialog offers "Cancel this order": the customer does not have the order yet. */
+export function canCancelWithRefund(order: Pick<OrderRecord, "state">): boolean {
+  return !isFinalState(order.state);
+}
+
+export const REFUND_REASON_MAX = 500;
+
+export interface RefundForm {
+  /** Dollars, as typed. */
+  amount: string;
+  reason: string;
+  cancelOrder: boolean;
+}
+
+/** The Refund dialog starts with the full amount that remains. */
+export function refundFormFor(order: Pick<OrderRecord, "totals" | "refundedCents">): RefundForm {
+  return { amount: (refundRemainingCents(order) / 100).toFixed(2), reason: "", cancelOrder: false };
+}
+
+export interface RefundCheck {
+  errors: string[];
+  /** Null when a field has an error. */
+  input: RefundOrderInput | null;
+}
+
+/** Checks the Refund dialog and builds the body for the Worker. */
+export function checkRefund(order: RefundFields, form: RefundForm): RefundCheck {
+  const errors: string[] = [];
+  const remaining = refundRemainingCents(order);
+  const amountCents = parseDollarsToCents(form.amount);
+  if (amountCents === null) errors.push("Enter the refund as an amount, for example 12.00.");
+  else if (amountCents < 1) errors.push("Enter a refund above $0.00.");
+  else if (amountCents > remaining) errors.push(`Enter a refund of ${formatMoney(remaining)} or less.`);
+  const reason = form.reason.trim();
+  if (!reason) errors.push("Enter the reason.");
+  else if (reason.length > REFUND_REASON_MAX) errors.push(`Make the reason ${REFUND_REASON_MAX} characters or shorter.`);
+  if (errors.length > 0 || amountCents === null) return { errors, input: null };
+  return {
+    errors,
+    input: {
+      orderId: order.id,
+      amountCents,
+      reason,
+      cancelOrder: form.cancelOrder && canCancelWithRefund(order)
+    }
+  };
 }
 
 // ---------------------------------------------------------------------------
